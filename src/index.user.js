@@ -132,6 +132,8 @@
                 throw new RequestError(error.message, true);
               }
               controller.signal.throwIfAborted();
+              if (response.url && response.url !== url)
+                throw new RequestError("请求跳转到其他页面，请检查登录状态");
               if (response.status === 429)
                 limitedUntil = Math.max(
                   limitedUntil,
@@ -146,8 +148,6 @@
                     response.status === 429 ||
                     (response.status >= 500 && response.status <= 599),
                 );
-              if (response.url && response.url !== url)
-                throw new RequestError("请求跳转到其他页面，请检查登录状态");
               try {
                 return await response.text();
               } catch (error) {

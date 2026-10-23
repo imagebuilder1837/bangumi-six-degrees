@@ -123,6 +123,33 @@ test("普通 4xx 与登录跳转不重试，正文读取失败仍可重试", asy
   assert.equal(attempt, 3);
 });
 
+test("跳转后的 503 和 429 不重试，也不污染后续请求的全局等待", async () => {
+  for (const status of [503, 429]) {
+    let time = 0;
+    const waits = [];
+    const requests = createRequests({
+      now: () => time,
+      sleep: async (ms) => {
+        waits.push(ms);
+        time += ms;
+      },
+      fetch: async (url) =>
+        url.endsWith("/a")
+          ? {
+              ok: false,
+              status,
+              url: "https://bgm.tv/login",
+              headers: new Headers({ "Retry-After": "60" }),
+            }
+          : new Response("ok"),
+    });
+    await assert.rejects(requests.text("https://bgm.tv/a"), /跳转/);
+    assert.equal(requests.count, 1);
+    assert.equal(await requests.text("https://bgm.tv/b"), "ok");
+    assert.deepEqual(waits, []);
+  }
+});
+
 test("暂时失败最多重试两次，分别等待一秒和两秒", async () => {
   const delays = [];
   let count = 0;
