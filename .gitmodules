@@ -1,0 +1,3 @@
+[submodule "vendor/bangumi-relationship-store"]
+	path = vendor/bangumi-relationship-store
+	url = ../bangumi-relationship-store.git
