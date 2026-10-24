@@ -21,9 +21,10 @@ export function delay(ms, signal) {
   });
 }
 class RequestError extends Error {
-  constructor(message, retryable = false) {
+  constructor(message, retryable = false, status) {
     super(message);
     this.retryable = retryable;
+    this.status = status;
   }
 }
 function retryAt(value, now) {
@@ -124,6 +125,7 @@ export function createRequests({
                 response.status === 408 ||
                   response.status === 429 ||
                   (response.status >= 500 && response.status <= 599),
+                response.status,
               );
             try {
               return await response.text();

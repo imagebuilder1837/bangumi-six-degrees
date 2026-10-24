@@ -44,9 +44,10 @@
     });
   }
   class RequestError extends Error {
-    constructor(message, retryable = false) {
+    constructor(message, retryable = false, status) {
       super(message);
       this.retryable = retryable;
+      this.status = status;
     }
   }
   function retryAt(value, now) {
@@ -147,6 +148,7 @@
                   response.status === 408 ||
                     response.status === 429 ||
                     (response.status >= 500 && response.status <= 599),
+                  response.status,
                 );
               try {
                 return await response.text();
@@ -257,6 +259,16 @@
       throw new Error("好友链接身份不匹配");
     return { ...user, friendsUrl: friends.href };
   }
+  function missingUser(document) {
+    const notice = document.querySelector("#colunmNotice");
+    return (
+      !document.querySelector("#headerProfile, #memberUserList") &&
+      notice?.querySelector("h2")?.textContent.trim() === "呜咕，出错了" &&
+      notice.querySelector("p.text")?.textContent.trim() ===
+        "数据库中没有查询到该用户的信息" &&
+      !!notice.querySelector('img[src="/img/bangumi/404.png"]')
+    );
+  }
   function unavailable(document) {
     const notice = document.querySelector("#colunmNotice");
     return (
@@ -359,16 +371,27 @@
     origin = window.location.origin,
     now = Date.now,
   }) {
+    async function home(input, options, candidate = false) {
+      const id = normalizeInput(input);
+      const url = `${origin}/user/${encodeURIComponent(id)}`;
+      let html;
+      try {
+        html = await requests.text(url, options);
+      } catch (error) {
+        options?.signal?.throwIfAborted();
+        if (candidate && error.status === 404) return null;
+        throw error;
+      }
+      const document = new window.DOMParser().parseFromString(
+        html,
+        "text/html",
+      );
+      if (candidate && missingUser(document)) return null;
+      return readHome(document, url);
+    }
     return {
-      async resolve(input, options) {
-        const id = normalizeInput(input);
-        const url = `${origin}/user/${encodeURIComponent(id)}`;
-        const html = await requests.text(url, options);
-        return readHome(
-          new window.DOMParser().parseFromString(html, "text/html"),
-          url,
-        );
-      },
+      resolve: (input, options) => home(input, options),
+      candidate: (number, options) => home(String(number), options, true),
       async relationships(id, direction, { signal, name } = {}) {
         const pending = [
           `${origin}/user/${encodeURIComponent(id)}/${direction}`,

@@ -9,6 +9,7 @@
 | `src/graph.mjs`                     | 独立关系观察仲裁、有效邻接关系、无效节点                               |
 | `src/search.mjs`                    | 双向整层搜索、最短性边界、受影响依赖的局部重证                         |
 | `src/session.mjs`                   | 首次恢复、端点解析竞态、运行／停止、成功条件记忆                       |
+| `src/random-users.mjs`              | 随机候选校验、抽样范围探测及独立范围记忆                               |
 | `src/view.mjs`、`src/styles.mjs`    | 弹窗及入口、路径呈现、原站风格和响应式样式                             |
 | `vendor/bangumi-relationship-store` | 独立 submodule，提供共享关系数据库协议                                 |
 | `scripts/`                          | 发布校验、可审计构建、综合检查                                         |
