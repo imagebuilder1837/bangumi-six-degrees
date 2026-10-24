@@ -41,12 +41,17 @@ test("关系选项顺序及默认值一致，快捷项提供填入自己和随�
   initialize(env.window, { fetch: env.fetch });
   const document = env.window.document;
   document.querySelector('[aria-label="六度分隔"]').click();
-  const select = document.querySelector("select");
+  document.querySelector('[role="combobox"]').click();
   assert.deepEqual(
-    [...select.options].map((option) => option.textContent),
+    [...document.querySelectorAll('[role="option"]')].map(
+      (option) => option.textContent,
+    ),
     ["双向好友", "单向好友", "无向关联"],
   );
-  assert.equal(select.selectedOptions[0].textContent, "双向好友");
+  assert.equal(
+    document.querySelector('[role="option"][aria-selected="true"]').textContent,
+    "双向好友",
+  );
   for (const endpoint of document.querySelectorAll(".bsd-endpoint")) {
     assert.deepEqual(
       [...endpoint.querySelectorAll("button")].map(

@@ -167,9 +167,9 @@ test("较慢的旧端点解析不能覆盖新的输入，切换模式和交换�
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(session.state.endpoints[0].input, "bob");
   const count = env.urls.length;
-  const mode = document.querySelector("select");
-  mode.value = "mutual";
-  mode.dispatchEvent(new env.window.Event("change"));
+  document.querySelector('[role="combobox"]').click();
+  document.querySelectorAll('[role="option"]')[1].click();
+  assert.equal(session.state.mode, "directed");
   document.querySelector('[data-action="swap"]').click();
   assert.equal(env.urls.length, count);
   assert.deepEqual(

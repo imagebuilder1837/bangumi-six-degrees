@@ -408,12 +408,13 @@ test("零跳描述同一位班友，切换关系模式后清除跳数和路径",
     "同一位班友，0 跳。",
   );
   assert.equal(document.querySelectorAll(".bsd-path a").length, 1);
-  const select = document.querySelector("select");
-  select.focus();
-  key(env.window, select, "ArrowDown");
-  select.value = "directed";
-  select.dispatchEvent(new env.window.Event("change"));
-  assert.equal(document.activeElement, select);
+  const trigger = document.querySelector('[role="combobox"]');
+  trigger.focus();
+  trigger.click();
+  key(env.window, trigger, "ArrowDown");
+  assert.equal(document.querySelectorAll(".bsd-path a").length, 1);
+  key(env.window, trigger, "Enter");
+  assert.equal(document.activeElement, trigger);
   assert.equal(document.querySelector(".bsd-hop-count"), null);
   assert.equal(document.querySelector(".bsd-path"), null);
   assert.equal(document.querySelector(".bsd-idle-mark").hidden, false);
@@ -422,6 +423,71 @@ test("零跳描述同一位班友，切换关系模式后清除跳数和路径",
     /起点 → 终点/,
   );
   env.window.close();
+});
+
+test("下拉候选仅确认后切换，Escape 分层关闭，离开或重开不提交候选", async (t) => {
+  const env = browser();
+  t.after(() => env.window.close());
+  const session = initialize(env.window, { fetch: env.fetch });
+  const { document } = env.window;
+  const launcher = document.querySelector(".bsd-entry-link");
+  launcher.click();
+  const trigger = document.querySelector('[role="combobox"]');
+  const popup = document.querySelector('[role="listbox"]');
+  trigger.focus();
+  key(env.window, trigger, " ");
+  key(env.window, trigger, "End");
+  assert.equal(session.state.mode, "mutual");
+  assert.equal(
+    document.getElementById(trigger.getAttribute("aria-activedescendant"))
+      .textContent,
+    "无向关联",
+  );
+  key(env.window, trigger, "Escape");
+  assert.equal(popup.hidden, true);
+  assert.equal(session.state.visible, true);
+  assert.equal(document.activeElement, trigger);
+  key(env.window, trigger, "Escape");
+  assert.equal(session.state.visible, false);
+  assert.equal(document.activeElement, launcher);
+  launcher.click();
+  assert.equal(popup.hidden, true);
+  for (const dismiss of ["Tab", "pointer", "blur", "close"]) {
+    trigger.focus();
+    trigger.click();
+    key(env.window, trigger, "End");
+    if (dismiss === "Tab") key(env.window, trigger, "Tab");
+    if (dismiss === "pointer")
+      pointer(env.window, document.querySelector(".bsd-mode-note"));
+    if (dismiss === "blur") document.querySelector(".bsd-close").focus();
+    if (dismiss === "close") {
+      session.close();
+      session.open();
+    }
+    assert.equal(popup.hidden, true);
+    assert.equal(session.state.mode, "mutual");
+  }
+  trigger.focus();
+  trigger.click();
+  key(env.window, trigger, "End");
+  key(env.window, trigger, " ");
+  assert.equal(session.state.mode, "undirected");
+  assert.equal(popup.hidden, true);
+  assert.equal(document.activeElement, trigger);
+  assert.equal(session.state.phase, "idle");
+  trigger.click();
+  document.querySelectorAll('[role="option"]')[1].click();
+  assert.equal(session.state.mode, "directed");
+  assert.equal(document.activeElement, trigger);
+  assert.equal(env.urls.length, 0);
+  await session.fill(1, "bob");
+  trigger.click();
+  const pending = session.run();
+  await until(() => trigger.disabled);
+  assert.equal(popup.hidden, true);
+  trigger.click();
+  assert.equal(popup.hidden, true);
+  await pending;
 });
 
 test("超过六跳仍展示完整路径并提供轻量彩蛋", async () => {

@@ -1,7 +1,8 @@
 import { styles } from "./styles.mjs";
+import { mountModePicker } from "./mode-picker.mjs";
+import { layoutPath } from "./path-layout.mjs";
 
 const defaultAvatar = "https://lain.bgm.tv/pic/user/l/icon.jpg";
-const arrows = { undirected: "—", directed: "→", mutual: "↔" };
 const modeNames = {
   mutual: "双向好友",
   directed: "单向好友",
@@ -86,7 +87,7 @@ export function mountView(window, session, { self, services }) {
       ${endpoint("起点用户", 0)}
       <button type="button" class="bsd-swap" data-action="swap" aria-label="交换起点与终点">⇄</button>
       ${endpoint("终点用户", 1)}
-    </div><div class="bsd-mode"><select aria-label="关系模式"><option value="mutual">双向好友</option><option value="directed">单向好友</option><option value="undirected">无向关联</option></select><span class="bsd-mode-note"></span></div>
+    </div><div class="bsd-mode"><button type="button" class="bsd-mode-trigger" aria-label="关系模式"></button><span class="bsd-mode-note"></span></div>
     <div class="bsd-results"><div class="bsd-idle-mark" aria-hidden="true"><i></i><i></i><i></i></div><div role="status"><span class="bsd-status-label"></span><h3 class="bsd-message"></h3><p class="bsd-detail"></p></div><div class="bsd-progress"></div><div class="bsd-pulse" aria-hidden="true" hidden><i></i><i></i><i></i></div><div class="bsd-output"></div><p class="bsd-warning" role="status" hidden></p></div></div></div>
     <footer class="bsd-footer"><span id="bsd-hint" class="bsd-hint" role="status"></span><div class="bsd-actions"><button type="button" data-action="stop" hidden>停止探索</button><button type="button" data-action="explore">开始探索 ↗</button></div></footer>
   </section>`;
@@ -95,7 +96,14 @@ export function mountView(window, session, { self, services }) {
   }
   document.body.append(overlay);
   const dialog = overlay.querySelector('[role="dialog"]');
-  const select = overlay.querySelector("select");
+  const modeTrigger = overlay.querySelector(".bsd-mode-trigger");
+  const modePicker = mountModePicker(
+    window,
+    overlay,
+    modeTrigger,
+    modeNames,
+    (mode) => session.setMode(mode),
+  );
   const explore = overlay.querySelector('[data-action="explore"]');
   const stop = overlay.querySelector('[data-action="stop"]');
   const endpoints = [...overlay.querySelectorAll(".bsd-endpoint")];
@@ -129,7 +137,10 @@ export function mountView(window, session, { self, services }) {
       if (event.key === "Escape" && session.state.visible) {
         event.preventDefault();
         inputMode("keyboard");
-        close();
+        if (modePicker.expanded) {
+          modePicker.close();
+          modeTrigger.focus({ preventScroll: true });
+        } else close();
         return;
       }
       // Holding Enter must not activate another control after the input blurs.
@@ -185,13 +196,13 @@ export function mountView(window, session, { self, services }) {
       .querySelector('[data-action="random"]')
       .addEventListener("click", () => void session.random(index));
   });
-  select.addEventListener("change", () => session.setMode(select.value));
   overlay
     .querySelector('[data-action="swap"]')
     .addEventListener("click", () => session.swap());
   explore.addEventListener("click", () => void session.run());
   stop.addEventListener("click", () => session.stop());
   const close = () => {
+    modePicker.close();
     session.close();
     launcher.focus();
   };
@@ -228,7 +239,10 @@ export function mountView(window, session, { self, services }) {
       (!stop.hidden ? stop : dialog.querySelector("button"))
     )?.focus();
   });
+  let pathLayout;
   function renderResult(result) {
+    pathLayout?.destroy();
+    pathLayout = null;
     output.replaceChildren();
     delete output.dataset.result;
     if (!result) return;
@@ -236,15 +250,9 @@ export function mountView(window, session, { self, services }) {
     if (result.status !== "found") return;
     const path = document.createElement("div");
     path.className = "bsd-path";
-    path.setAttribute("aria-label", "已确认的最短关系路径");
+    path.setAttribute("role", "group");
+    path.setAttribute("aria-label", "已确认的最短关系路径，按起点到终点排列");
     result.path.forEach((user, index) => {
-      if (index) {
-        const arrow = document.createElement("span");
-        arrow.className = "bsd-link";
-        arrow.textContent = arrows[result.conditions.mode];
-        arrow.setAttribute("aria-hidden", "true");
-        path.append(arrow);
-      }
       const link = document.createElement("a");
       link.href = `/user/${encodeURIComponent(user.id)}`;
       link.target = "_blank";
@@ -259,9 +267,21 @@ export function mountView(window, session, { self, services }) {
       const id = document.createElement("small");
       id.textContent = `@${user.id}`;
       link.append(avatar, name, id);
+      if (index === 0 || index === result.path.length - 1) {
+        const label = document.createElement("span");
+        label.className = "bsd-path-endpoint";
+        label.textContent =
+          result.path.length === 1
+            ? "起点 / 终点"
+            : index === 0
+              ? "起点"
+              : "终点";
+        link.append(label);
+      }
       path.append(link);
     });
     output.append(path);
+    pathLayout = layoutPath(window, path, result.conditions.mode);
     if (result.path.length > 7) {
       const egg = document.createElement("p");
       egg.className = "bsd-egg";
@@ -311,8 +331,7 @@ export function mountView(window, session, { self, services }) {
         String(item.activity === "randomizing"),
       );
     });
-    select.value = state.mode;
-    select.disabled = busy;
+    modePicker.update(state.mode, busy, state.visible);
     text(overlay.querySelector(".bsd-mode-note"), modeNotes[state.mode]);
     overlay.querySelector('[data-action="swap"]').disabled = busy;
     explore.disabled = !state.canRun;
@@ -362,6 +381,7 @@ export function mountView(window, session, { self, services }) {
       renderResult(state.result);
       lastResult = state.result;
     }
+    if (state.visible) pathLayout?.update();
     if (
       state.visible &&
       hadFocus &&

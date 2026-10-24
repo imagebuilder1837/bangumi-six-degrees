@@ -1632,7 +1632,7 @@
   position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
   padding: 24px; background: #28212e82; backdrop-filter: blur(5px); box-sizing: border-box; color-scheme: light;
 }
-.bsd-overlay[hidden], .bsd-dialog [hidden], .bsd-dialog[hidden] { display: none !important; }
+.bsd-overlay[hidden], .bsd-overlay [hidden] { display: none !important; }
 .bsd-dialog {
   width: min(880px, 100%); min-width: 0; max-height: 90dvh; display: flex; flex-direction: column;
   color: var(--bsd-fg); background: var(--bsd-bg); border: 1px solid var(--bsd-line); border-radius: 26px;
@@ -1655,7 +1655,7 @@
 .bsd-dialog .bsd-close { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--bsd-line); background: none; border-radius: 50%; line-height: 1; flex: none; }
 .bsd-close svg { display: block; width: 16px; height: 16px; pointer-events: none; }
 .bsd-close:hover { background: var(--bsd-soft); }
-.bsd-body { padding: 0 22px 5px; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.bsd-body { padding: 0 22px 5px; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--bsd-pink) transparent; }
 .bsd-workspace { padding: 20px 22px 16px; border-radius: 20px; background: var(--bsd-soft); position: relative; overflow: hidden; }
 .bsd-workspace::before { content: ""; position: absolute; inset: 0; opacity: .12; background-image: radial-gradient(var(--bsd-muted) .7px, transparent .7px); background-size: 23px 23px; pointer-events: none; }
 .bsd-top { display: grid; grid-template-columns: minmax(0,1fr) 33px minmax(0,1fr); align-items: center; gap: 22px; position: relative; }
@@ -1675,7 +1675,11 @@
 .bsd-swap { padding: 0; width: 33px; height: 33px; border: 1px solid var(--bsd-line); border-radius: 50%; background: var(--bsd-bg); color: var(--bsd-pink) !important; font-size: 19px !important; line-height: 1; }
 .bsd-swap:hover:not(:disabled) { transform: rotate(180deg); }
 .bsd-mode { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; padding: 18px 0; position: relative; }
-.bsd-mode select { border: 1px solid var(--bsd-line); background: var(--bsd-bg); border-radius: 20px; padding: 5px 12px; font-size: 12px; }
+.bsd-mode-trigger { border: 1px solid var(--bsd-line); background: var(--bsd-bg); border-radius: 20px; padding: 6px 15px; font-size: 12px !important; }
+.bsd-mode-options { position: fixed; z-index: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--bsd-pink) transparent; padding: 5px; box-sizing: border-box; border: 1px solid var(--bsd-line); border-radius: 16px; background: var(--bsd-bg); color: var(--bsd-fg); font: 12px/1.65 system-ui, sans-serif; text-align: center; }
+.bsd-mode-options [role="option"] { padding: 8px; border-radius: 11px; cursor: pointer; }
+.bsd-mode-options [role="option"]:hover, .bsd-mode-options [data-active="true"] { background: var(--bsd-soft); }
+.bsd-mode-options [aria-selected="true"] { color: var(--bsd-pink); font-weight: 700; }
 .bsd-mode-note { color: var(--bsd-muted); font-size: 11px; }
 .bsd-results { position: relative; min-width: 0; min-height: 210px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px 0 10px; text-align: center; border-top: 1px solid var(--bsd-line); }
 .bsd-results > [role="status"] { max-width: 100%; }
@@ -1692,14 +1696,16 @@
 .bsd-pulse { display: flex; gap: 11px; margin: 22px 0; }
 .bsd-pulse i { width: 6px; height: 6px; border-radius: 50%; background: var(--bsd-pink); animation: bsd-pulse 1.6s infinite; }
 .bsd-pulse i:nth-child(2) { animation-delay: .2s; }.bsd-pulse i:nth-child(3) { animation-delay: .4s; }
-.bsd-output { max-width: 100%; min-width: 0; }
-.bsd-path { display: flex; align-items: center; width: max-content; max-width: 100%; gap: 12px; overflow-x: auto; margin: 6px auto 0; padding: 20px 6px 12px; }
-.bsd-path a { display: flex; flex-direction: column; align-items: center; flex: 0 0 78px; max-width: 78px; color: var(--bsd-fg); text-decoration: none; animation: bsd-appear .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
+.bsd-output { width: 100%; min-width: 0; }
+.bsd-path { position: relative; display: grid; align-items: start; gap: 40px 16px; width: 100%; margin: 6px auto 0; padding: 20px 16px 12px; }
+.bsd-path a { position: relative; display: flex; flex-direction: column; align-items: center; justify-self: center; width: 100%; max-width: 78px; min-width: 0; color: var(--bsd-fg); text-decoration: none; animation: bsd-appear .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
+.bsd-path-lines { position: absolute; inset: 0; pointer-events: none; color: var(--bsd-pink); overflow: visible; }
+.bsd-path-connection { animation: bsd-connect .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
+.bsd-path-endpoint { margin-top: 5px; color: var(--bsd-pink); font-size: 10px; }
 .bsd-path img { display: block; width: 52px; height: 52px; border-radius: 18px; object-fit: cover; transition: transform .2s; }
 .bsd-path a:hover img { transform: translateY(-4px) rotate(-3deg); }
-.bsd-path strong, .bsd-path small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsd-path strong, .bsd-path small { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .bsd-path strong { margin-top: 6px; font-size: 11px; }.bsd-path small { color: var(--bsd-muted); font-size: 10px; }
-.bsd-link { color: var(--bsd-pink); font-size: 19px; flex: none; }
 .bsd-egg { color: var(--bsd-muted); font-size: 11px; margin: 10px 0; }
 .bsd-warning { color: #a96c20; font-size: 12px; margin: 10px 0; overflow-wrap: anywhere; }
 .bsd-footer { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 16px; padding: 18px 28px; border-top: 1px solid var(--bsd-line); }
@@ -1708,8 +1714,10 @@
 .bsd-actions button { border: 1px solid var(--bsd-line); background: transparent; border-radius: 28px; padding: 9px 17px; box-shadow: none; }
 .bsd-actions [data-action="explore"] { padding: 10px 25px; border: 0; background: linear-gradient(120deg, #dc728e, #eaa2ad); color: #fff; font-weight: 750; box-shadow: 0 6px 17px var(--bsd-shadow); }
 .bsd-actions [data-action="explore"]:hover:not(:disabled) { transform: translateY(-3px); box-shadow: 0 9px 22px var(--bsd-shadow); }
-@keyframes bsd-open { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+/* Keep fixed-position options viewport-relative, including during dialog entry. */
+@keyframes bsd-open { from { opacity: 0; } to { opacity: 1; } }
 @keyframes bsd-appear { from { opacity: 0; transform: translateY(12px) scale(.9); } to { opacity: 1; transform: none; } }
+@keyframes bsd-connect { from { opacity: 0; } to { opacity: 1; } }
 @keyframes bsd-pulse { 0%, 100% { opacity: .3; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
 @keyframes bsd-shuffle { 25% { transform: rotate(-8deg); } 70% { transform: rotate(6deg); } }
 [data-theme="dark"] .bsd-overlay { --bsd-bg: #2b2831; --bsd-fg: #f2e9ef; --bsd-muted: #b6aab9; --bsd-soft: #36303c; --bsd-line: #4c404d; --bsd-pink: #f09bb2; --bsd-shadow: #0004; color-scheme: dark; }
@@ -1730,8 +1738,226 @@
 }
 `;
 
+  // A select-only combobox: focus stays on the trigger; candidates never commit
+  // until explicitly activated. The popup lives outside the clipped dialog body.
+  function mountModePicker(window, overlay, trigger, names, onChange) {
+    const { document } = window;
+    const values = Object.keys(names);
+    const popup = document.createElement("div");
+    popup.className = "bsd-mode-options";
+    popup.id = "bsd-mode-options";
+    popup.hidden = true;
+    popup.setAttribute("role", "listbox");
+    popup.setAttribute("aria-label", "关系模式");
+    trigger.setAttribute("role", "combobox");
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-controls", popup.id);
+    trigger.setAttribute("aria-expanded", "false");
+    const options = values.map((value, index) => {
+      const option = document.createElement("div");
+      option.id = `bsd-mode-option-${index}`;
+      option.setAttribute("role", "option");
+      option.textContent = names[value];
+      popup.append(option);
+      option.addEventListener("pointerdown", (event) => event.preventDefault());
+      option.addEventListener("click", () => commit(index));
+      return option;
+    });
+    overlay.querySelector('[role="dialog"]').append(popup);
+    let selected = 0;
+    let candidate = 0;
+    function highlight() {
+      options.forEach((option, index) => {
+        option.dataset.active = String(index === candidate);
+        option.setAttribute("aria-selected", String(index === selected));
+      });
+      trigger.setAttribute("aria-activedescendant", options[candidate].id);
+      options[candidate].scrollIntoView?.({ block: "nearest" });
+    }
+    function position() {
+      if (popup.hidden) return;
+      const rect = trigger.getBoundingClientRect();
+      const margin = 8;
+      const below = window.innerHeight - rect.bottom - margin;
+      const above = rect.top - margin;
+      const down = below >= Math.min(popup.scrollHeight, 150) || below >= above;
+      popup.style.maxHeight = `${Math.max(0, down ? below : above)}px`;
+      popup.style.width = `${Math.min(rect.width, window.innerWidth - margin * 2)}px`;
+      popup.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - popup.offsetWidth - margin))}px`;
+      popup.style.top = `${down ? rect.bottom + 4 : Math.max(margin, rect.top - popup.offsetHeight - 4)}px`;
+    }
+    function close() {
+      popup.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.removeAttribute("aria-activedescendant");
+    }
+    function open() {
+      if (trigger.disabled) return;
+      candidate = selected;
+      popup.hidden = false;
+      trigger.setAttribute("aria-expanded", "true");
+      position();
+      highlight();
+    }
+    function commit(index) {
+      if (trigger.disabled || popup.hidden) return;
+      close();
+      trigger.focus({ preventScroll: true });
+      onChange(values[index]);
+    }
+    trigger.addEventListener("click", () => {
+      if (popup.hidden) open();
+      else close();
+    });
+    trigger.addEventListener("blur", close);
+    trigger.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey)
+        return;
+      const { key } = event;
+      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(key)) {
+        event.preventDefault();
+        if (popup.hidden) open();
+        else if (key === "ArrowDown")
+          candidate = (candidate + 1) % values.length;
+        else if (key === "ArrowUp")
+          candidate = (candidate + values.length - 1) % values.length;
+        if (key === "Home") candidate = 0;
+        if (key === "End") candidate = values.length - 1;
+        highlight();
+      } else if (key === "Enter" || key === " ") {
+        event.preventDefault();
+        if (event.repeat) return;
+        if (popup.hidden) open();
+        else commit(candidate);
+      } else if (key === "Tab") close();
+    });
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (!trigger.contains(event.target) && !popup.contains(event.target))
+          close();
+      },
+      true,
+    );
+    window.addEventListener("resize", position);
+    // Capture nested body scrolling as well as page/viewport changes.
+    document.addEventListener(
+      "scroll",
+      (event) => {
+        if (!popup.contains(event.target)) position();
+      },
+      true,
+    );
+    window.visualViewport?.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("scroll", position);
+    return {
+      close,
+      get expanded() {
+        return !popup.hidden;
+      },
+      update(value, disabled, visible) {
+        selected = values.indexOf(value);
+        trigger.textContent = `${names[value]} ▾`;
+        trigger.disabled = disabled;
+        if (disabled || !visible) close();
+        if (!popup.hidden) highlight();
+        options.forEach((option, index) =>
+          option.setAttribute("aria-selected", String(index === selected)),
+        );
+      },
+    };
+  }
+
+  const svgNS = "http://www.w3.org/2000/svg";
+
+  // Layout only: the DOM and tab order remain the original start-to-end sequence.
+  function layoutPath(window, path, mode) {
+    const nodes = [...path.querySelectorAll("a")];
+    const svg = window.document.createElementNS(svgNS, "svg");
+    svg.classList.add("bsd-path-lines");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    path.prepend(svg);
+    const markerId = "bsd-path-arrow";
+    svg.innerHTML = `<defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="currentColor" stroke-width="1.5"/></marker></defs>`;
+    const lines = nodes.slice(1).map((_, index) => {
+      const line = window.document.createElementNS(svgNS, "path");
+      line.classList.add("bsd-path-connection");
+      line.style.setProperty("--bsd-step", Math.min(index + 0.5, 7));
+      line.setAttribute("fill", "none");
+      line.setAttribute("stroke", "currentColor");
+      line.setAttribute("stroke-width", "1.5");
+      if (mode !== "undirected")
+        line.setAttribute("marker-end", `url(#${markerId})`);
+      if (mode === "mutual")
+        line.setAttribute("marker-start", `url(#${markerId})`);
+      svg.append(line);
+      return line;
+    });
+    function update() {
+      const width = path.clientWidth;
+      if (!width) return; // Hidden dialogs get measured when reopened.
+      // 78px nodes, 16px column gaps and 16px padding on each side.
+      const columns = Math.min(
+        nodes.length,
+        Math.max(1, Math.floor((width - 16 * 2 + 16) / (78 + 16))),
+      );
+      path.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
+      nodes.forEach((node, index) => {
+        const row = Math.floor(index / columns);
+        const column = index % columns;
+        node.style.gridRow = String(row + 1);
+        node.style.gridColumn = String(
+          (row % 2 ? columns - column - 1 : column) + 1,
+        );
+      });
+      // offset geometry is unaffected by the staggered entrance animation.
+      const centers = nodes.map((node) => ({
+        x: node.offsetLeft + node.offsetWidth / 2,
+        y: node.offsetTop + 26,
+      }));
+      lines.forEach((line, index) => {
+        const a = centers[index],
+          b = centers[index + 1];
+        const turn =
+          Math.floor(index / columns) !== Math.floor((index + 1) / columns);
+        if (!turn) {
+          const direction = b.x > a.x ? 1 : -1;
+          line.setAttribute(
+            "d",
+            `M ${a.x + direction * 30} ${a.y} H ${b.x - direction * 30}`,
+          );
+        } else {
+          const direction =
+            columns === 1 || Math.floor(index / columns) % 2 === 0 ? 1 : -1;
+          const edge = a.x + direction * 44;
+          const radius = 10;
+          line.setAttribute(
+            "d",
+            `M ${a.x + direction * 30} ${a.y} H ${edge - direction * radius} Q ${edge} ${a.y} ${edge} ${a.y + radius} V ${b.y - radius} Q ${edge} ${b.y} ${edge - direction * radius} ${b.y} H ${b.x + direction * 30}`,
+          );
+        }
+      });
+      svg.setAttribute("width", String(width));
+      svg.setAttribute("height", String(path.clientHeight));
+    }
+    const observer = window.ResizeObserver
+      ? new window.ResizeObserver(update)
+      : null;
+    observer?.observe(path);
+    nodes.forEach((node) => observer?.observe(node));
+    window.addEventListener("resize", update);
+    update();
+    return {
+      update,
+      destroy() {
+        observer?.disconnect();
+        window.removeEventListener("resize", update);
+      },
+    };
+  }
+
   const defaultAvatar = "https://lain.bgm.tv/pic/user/l/icon.jpg";
-  const arrows = { undirected: "—", directed: "→", mutual: "↔" };
   const modeNames = {
     mutual: "双向好友",
     directed: "单向好友",
@@ -1816,7 +2042,7 @@
       ${endpoint("起点用户", 0)}
       <button type="button" class="bsd-swap" data-action="swap" aria-label="交换起点与终点">⇄</button>
       ${endpoint("终点用户", 1)}
-    </div><div class="bsd-mode"><select aria-label="关系模式"><option value="mutual">双向好友</option><option value="directed">单向好友</option><option value="undirected">无向关联</option></select><span class="bsd-mode-note"></span></div>
+    </div><div class="bsd-mode"><button type="button" class="bsd-mode-trigger" aria-label="关系模式"></button><span class="bsd-mode-note"></span></div>
     <div class="bsd-results"><div class="bsd-idle-mark" aria-hidden="true"><i></i><i></i><i></i></div><div role="status"><span class="bsd-status-label"></span><h3 class="bsd-message"></h3><p class="bsd-detail"></p></div><div class="bsd-progress"></div><div class="bsd-pulse" aria-hidden="true" hidden><i></i><i></i><i></i></div><div class="bsd-output"></div><p class="bsd-warning" role="status" hidden></p></div></div></div>
     <footer class="bsd-footer"><span id="bsd-hint" class="bsd-hint" role="status"></span><div class="bsd-actions"><button type="button" data-action="stop" hidden>停止探索</button><button type="button" data-action="explore">开始探索 ↗</button></div></footer>
   </section>`;
@@ -1825,7 +2051,14 @@
     }
     document.body.append(overlay);
     const dialog = overlay.querySelector('[role="dialog"]');
-    const select = overlay.querySelector("select");
+    const modeTrigger = overlay.querySelector(".bsd-mode-trigger");
+    const modePicker = mountModePicker(
+      window,
+      overlay,
+      modeTrigger,
+      modeNames,
+      (mode) => session.setMode(mode),
+    );
     const explore = overlay.querySelector('[data-action="explore"]');
     const stop = overlay.querySelector('[data-action="stop"]');
     const endpoints = [...overlay.querySelectorAll(".bsd-endpoint")];
@@ -1859,7 +2092,10 @@
         if (event.key === "Escape" && session.state.visible) {
           event.preventDefault();
           inputMode("keyboard");
-          close();
+          if (modePicker.expanded) {
+            modePicker.close();
+            modeTrigger.focus({ preventScroll: true });
+          } else close();
           return;
         }
         // Holding Enter must not activate another control after the input blurs.
@@ -1917,13 +2153,13 @@
         .querySelector('[data-action="random"]')
         .addEventListener("click", () => void session.random(index));
     });
-    select.addEventListener("change", () => session.setMode(select.value));
     overlay
       .querySelector('[data-action="swap"]')
       .addEventListener("click", () => session.swap());
     explore.addEventListener("click", () => void session.run());
     stop.addEventListener("click", () => session.stop());
     const close = () => {
+      modePicker.close();
       session.close();
       launcher.focus();
     };
@@ -1960,7 +2196,10 @@
         (!stop.hidden ? stop : dialog.querySelector("button"))
       )?.focus();
     });
+    let pathLayout;
     function renderResult(result) {
+      pathLayout?.destroy();
+      pathLayout = null;
       output.replaceChildren();
       delete output.dataset.result;
       if (!result) return;
@@ -1968,15 +2207,9 @@
       if (result.status !== "found") return;
       const path = document.createElement("div");
       path.className = "bsd-path";
-      path.setAttribute("aria-label", "已确认的最短关系路径");
+      path.setAttribute("role", "group");
+      path.setAttribute("aria-label", "已确认的最短关系路径，按起点到终点排列");
       result.path.forEach((user, index) => {
-        if (index) {
-          const arrow = document.createElement("span");
-          arrow.className = "bsd-link";
-          arrow.textContent = arrows[result.conditions.mode];
-          arrow.setAttribute("aria-hidden", "true");
-          path.append(arrow);
-        }
         const link = document.createElement("a");
         link.href = `/user/${encodeURIComponent(user.id)}`;
         link.target = "_blank";
@@ -1991,9 +2224,21 @@
         const id = document.createElement("small");
         id.textContent = `@${user.id}`;
         link.append(avatar, name, id);
+        if (index === 0 || index === result.path.length - 1) {
+          const label = document.createElement("span");
+          label.className = "bsd-path-endpoint";
+          label.textContent =
+            result.path.length === 1
+              ? "起点 / 终点"
+              : index === 0
+                ? "起点"
+                : "终点";
+          link.append(label);
+        }
         path.append(link);
       });
       output.append(path);
+      pathLayout = layoutPath(window, path, result.conditions.mode);
       if (result.path.length > 7) {
         const egg = document.createElement("p");
         egg.className = "bsd-egg";
@@ -2043,8 +2288,7 @@
           String(item.activity === "randomizing"),
         );
       });
-      select.value = state.mode;
-      select.disabled = busy;
+      modePicker.update(state.mode, busy, state.visible);
       text(overlay.querySelector(".bsd-mode-note"), modeNotes[state.mode]);
       overlay.querySelector('[data-action="swap"]').disabled = busy;
       explore.disabled = !state.canRun;
@@ -2094,6 +2338,7 @@
         renderResult(state.result);
         lastResult = state.result;
       }
+      if (state.visible) pathLayout?.update();
       if (
         state.visible &&
         hadFocus &&

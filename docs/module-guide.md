@@ -12,6 +12,8 @@
 | `src/session.mjs`                   | 端点初始化与异步竞态、随机填入、运行／停止及同页会话                   |
 | `src/random-users.mjs`              | 随机候选校验、抽样范围探测及独立范围记忆                               |
 | `src/view.mjs`、`src/styles.mjs`    | 弹窗及入口、路径呈现、原站风格和响应式样式                             |
+| `src/mode-picker.mjs`              | 关系模式选择器的候选、确认、焦点及浮层定位                             |
+| `src/path-layout.mjs`              | 保持用户序列的自适应蛇形排布与关系连线                                 |
 | `vendor/bangumi-relationship-store` | 独立 submodule，提供共享关系数据库协议                                 |
 | `scripts/`                          | 发布校验、可审计构建、综合检查                                         |
 | `test/`                             | 已约定边界上的行为测试；支持代码及 HTML 样本分别放在 support、fixtures |
