@@ -1,17 +1,29 @@
+import { OperationError } from "./errors.mjs";
+
 const hosts = new Set(["bgm.tv", "bangumi.tv", "chii.in"]);
 function identifier(value) {
   if (!value || /[\s/?#@]/u.test(value))
-    throw new Error("请输入有效的用户标识");
+    throw new OperationError("invalid-input", "请输入有效的用户标识");
   return value;
 }
 export function normalizeInput(input) {
   const text = input.trim();
   if (/^https?:\/\//i.test(text)) {
-    const url = new URL(text);
+    let url;
+    try {
+      url = new URL(text);
+    } catch (cause) {
+      throw new OperationError("invalid-input", "请输入有效的用户标识", cause);
+    }
     const match = /^\/user\/([^/]+)\/?$/.exec(url.pathname);
     if (!hosts.has(url.host) || url.username || url.password || !match)
-      throw new Error("请输入有效的用户标识");
-    return identifier(decodeURIComponent(match[1]));
+      throw new OperationError("invalid-input", "请输入有效的用户标识");
+    try {
+      return identifier(decodeURIComponent(match[1]));
+    } catch (cause) {
+      if (cause instanceof OperationError) throw cause;
+      throw new OperationError("invalid-input", "请输入有效的用户标识", cause);
+    }
   }
   return identifier(text.replace(/^@/, ""));
 }
@@ -19,11 +31,15 @@ function identity(document, base) {
   const anchor = document.querySelector(
     "#headerProfile h1.nameSingle .inner > .name > a[href]",
   );
-  if (!anchor) throw new Error("无法识别主页用户，请检查原站页面");
+  if (!anchor)
+    throw new OperationError(
+      "profile-missing",
+      "无法识别主页用户，请检查原站页面",
+    );
   const url = new URL(anchor.getAttribute("href"), base);
   const match = /^\/user\/([^/]+)\/?$/.exec(url.pathname);
   if (url.origin !== new URL(base).origin || !match)
-    throw new Error("无法识别主页用户");
+    throw new OperationError("profile-identity", "无法识别主页用户");
   const current = anchor.parentElement
     .querySelector("small.grey")
     ?.textContent.trim();

@@ -35,6 +35,7 @@ test("429 的等待约束所有新请求和重试", async () => {
 
 test("无效 Retry-After 等待六十秒，连续限流也只能总共尝试三次", async () => {
   let time = 0;
+  const calls = [];
   const waits = [];
   const requests = createRequests({
     now: () => time,
@@ -42,12 +43,17 @@ test("无效 Retry-After 等待六十秒，连续限流也只能总共尝试三�
       waits.push(ms);
       time += ms;
     },
-    fetch: async () =>
-      new Response("", { status: 429, headers: { "Retry-After": "invalid" } }),
+    fetch: async (url) => {
+      calls.push(url);
+      return new Response("", {
+        status: 429,
+        headers: { "Retry-After": "invalid" },
+      });
+    },
   });
   await assert.rejects(requests.text("https://bgm.tv/a"), /429/);
   assert.deepEqual(waits, [60000, 60000]);
-  assert.equal(requests.count, 3);
+  assert.equal(calls.length, 3);
 });
 
 test("同一队列最多四个并发请求，取消队列任务不会占用后续名额", async () => {
@@ -76,34 +82,49 @@ test("同一队列最多四个并发请求，取消队列任务不会占用后�
   await until(() => gates.length === 5);
   for (const gate of gates) gate.resolve();
   await Promise.all([...pending, fifth]);
-  assert.equal(requests.count, 5);
+  assert.equal(gates.length, 5);
 });
 
 test("取消和超时能终止不遵守 abort 的 fetch", async () => {
+  const started = deferred();
   const requests = createRequests({
-    fetch: () => new Promise(() => {}),
+    fetch: () => {
+      started.resolve();
+      return new Promise(() => {});
+    },
   });
   const abort = new AbortController();
   const pending = requests.text("https://bgm.tv/a", { signal: abort.signal });
   const rejected = assert.rejects(pending, { name: "AbortError" });
-  await until(() => requests.count === 1);
+  await started.promise;
   abort.abort();
   await rejected;
+  const calls = [];
   const timeout = createRequests({
-    fetch: () => new Promise(() => {}),
+    fetch: (url) => {
+      calls.push(url);
+      return new Promise(() => {});
+    },
     timeout: 5,
     sleep: async () => {},
   });
-  await assert.rejects(timeout.text("https://bgm.tv/b"), /超时/);
-  assert.equal(timeout.count, 3);
+  await assert.rejects(timeout.text("https://bgm.tv/b"), {
+    code: "timeout",
+    message: "请求超时",
+  });
+  assert.equal(calls.length, 3);
 });
 
 test("普通 4xx 与登录跳转不重试，正文读取失败仍可重试", async () => {
+  const calls = [];
   const requests = createRequests({
-    fetch: async () => new Response("", { status: 403 }),
+    fetch: async (url) => {
+      calls.push(url);
+      return new Response("", { status: 403 });
+    },
   });
   await assert.rejects(requests.text("https://bgm.tv/a"), /403/);
-  assert.equal(requests.count, 1);
+  assert.equal(calls.length, 1);
   const redirect = createRequests({
     fetch: async () => ({ ok: true, url: "https://bgm.tv/login" }),
   });
@@ -127,24 +148,27 @@ test("跳转后的 503 和 429 不重试，也不污染后续请求的全局等�
   for (const status of [503, 429]) {
     let time = 0;
     const waits = [];
+    const calls = [];
     const requests = createRequests({
       now: () => time,
       sleep: async (ms) => {
         waits.push(ms);
         time += ms;
       },
-      fetch: async (url) =>
-        url.endsWith("/a")
+      fetch: async (url) => {
+        calls.push(url);
+        return url.endsWith("/a")
           ? {
               ok: false,
               status,
               url: "https://bgm.tv/login",
               headers: new Headers({ "Retry-After": "60" }),
             }
-          : new Response("ok"),
+          : new Response("ok");
+      },
     });
     await assert.rejects(requests.text("https://bgm.tv/a"), /跳转/);
-    assert.equal(requests.count, 1);
+    assert.equal(calls.length, 1);
     assert.equal(await requests.text("https://bgm.tv/b"), "ok");
     assert.deepEqual(waits, []);
   }
@@ -165,4 +189,35 @@ test("暂时失败最多重试两次，分别等待一秒和两秒", async () =>
   });
   assert.equal(await requests.text("https://bgm.tv/user/a"), "ok");
   assert.deepEqual(delays, [1000, 2000]);
+  assert.equal(count, 3);
+});
+
+test("网络和正文失败按稳定原因分类，重试耗尽仍保留原始消息与异常", async () => {
+  for (const code of ["network", "body-read"]) {
+    const cause = new Error("任意变更的底层消息");
+    let attempts = 0;
+    const requests = createRequests({
+      fetch: async () => {
+        attempts++;
+        if (code === "network") throw cause;
+        return {
+          ok: true,
+          text: async () => {
+            throw cause;
+          },
+        };
+      },
+      sleep: async () => {},
+    });
+    await assert.rejects(
+      requests.text("https://bgm.tv/user/alice"),
+      (error) => {
+        assert.equal(error.code, code);
+        assert.equal(error.message, cause.message);
+        assert.equal(error.cause, cause);
+        return true;
+      },
+    );
+    assert.equal(attempts, 3);
+  }
 });

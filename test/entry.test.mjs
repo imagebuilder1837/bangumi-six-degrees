@@ -16,7 +16,10 @@ test("三个域的自己及其他用户主页使用 network_service 入口，列
       assert.ok(entry);
       entry.querySelector("a").click();
       assert.equal(session.state.visible, true);
-      assert.deepEqual(session.state.inputs, [current, ""]);
+      assert.deepEqual(
+        session.state.endpoints.map(({ input }) => input),
+        [current, ""],
+      );
       assert.equal(env.urls.length, 0);
       assert.equal(document.querySelector(".bsd-launcher"), null);
       env.window.close();
@@ -69,16 +72,16 @@ test("输入仅提示用户标识，UID 及主页链接仍可在内部归一", a
     assert.equal(field.placeholder, "请输入用户标识");
   for (const value of ["bad/name", "https://example.com/user/bob"]) {
     input(env.window, "终点用户", value);
-    await until(() => session.state.errors[1]);
+    await until(() => session.state.endpoints[1].error);
     assert.equal(
-      document.querySelector('[data-endpoint="1"] .bsd-error').textContent,
-      "请输入有效的用户标识",
+      document.querySelector(".bsd-hint").textContent,
+      "请输入有效的终点用户标识",
     );
   }
   assert.equal(env.urls.length, 0);
   for (const value of ["2", "https://bangumi.tv/user/2"]) {
     input(env.window, "终点用户", value);
-    await until(() => session.state.endpoints[1]?.id === "bob");
+    await until(() => session.state.endpoints[1].user?.id === "bob");
     assert.equal(
       document.querySelector('input[aria-label="终点用户"]').value,
       "bob",
@@ -110,7 +113,7 @@ test("头像仅链接已确认的规范用户主页，解析、交换及清空�
   input(env.window, "终点用户", "2");
   assert.equal(profiles[1].hasAttribute("href"), false);
   gate.resolve();
-  await until(() => session.state.endpoints[1]?.id === "bob");
+  await until(() => session.state.endpoints[1].user?.id === "bob");
   assert.equal(names[1].textContent, "鲍勃");
   assert.equal(names[1].title, "鲍勃");
   assert.equal(profiles[1].getAttribute("href"), "/user/bob");
@@ -132,7 +135,7 @@ test("头像仅链接已确认的规范用户主页，解析、交换及清空�
   assert.equal(names[0].textContent, "");
   assert.equal(names[0].title, "");
   input(env.window, "终点用户", "bad/name");
-  await until(() => session.state.errors[1]);
+  await until(() => session.state.endpoints[1].error);
   assert.equal(profiles[1].hasAttribute("href"), false);
   assert.equal(names[1].textContent, "");
   env.window.close();
@@ -151,7 +154,10 @@ test("缺少原站牌子容器或存储被拒绝时不会破坏页面", () => {
   });
   const session = initialize(denied.window, { fetch: denied.fetch });
   session.open();
-  assert.deepEqual(session.state.inputs, ["alice", ""]);
+  assert.deepEqual(
+    session.state.endpoints.map(({ input }) => input),
+    ["alice", ""],
+  );
   assert.equal(denied.urls.length, 0);
   denied.window.close();
 });

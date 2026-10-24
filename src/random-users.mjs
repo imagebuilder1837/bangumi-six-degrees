@@ -45,8 +45,7 @@ export function createRandomUsers({
     lastAttempt = -Infinity;
 
   function refresh() {
-    if (background) return background;
-    if (now() - lastAttempt < 3600000) return Promise.resolve();
+    if (background || now() - lastAttempt < 3600000) return;
     lastAttempt = now();
     const abort = new AbortController();
     controller = abort;
@@ -93,11 +92,9 @@ export function createRandomUsers({
         }
       }
     })();
-    return background;
   }
 
   return {
-    refresh,
     cancel() {
       controller?.abort();
     },
@@ -105,7 +102,7 @@ export function createRandomUsers({
       signal ??= new AbortController().signal;
       signal.throwIfAborted();
       const range = record.range;
-      void refresh();
+      refresh();
       while (true) {
         signal.throwIfAborted();
         const number = 1 + Math.floor(random() * range);

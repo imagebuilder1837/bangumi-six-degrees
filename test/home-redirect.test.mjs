@@ -19,9 +19,16 @@ function response(body, url, status = 200) {
 function setup(t, fetch, requestOptions = {}) {
   const window = new JSDOM("").window;
   t.after(() => window.close());
-  const requests = createRequests({ fetch, ...requestOptions });
+  const calls = [];
+  const requests = createRequests({
+    ...requestOptions,
+    fetch: (...args) => {
+      calls.push(args[0]);
+      return fetch(...args);
+    },
+  });
   return {
-    requests,
+    calls,
     site: createSite({ window, requests, origin: "https://bgm.tv" }),
   };
 }
@@ -73,7 +80,7 @@ test("跨域、非主页及带额外参数的目标均中性报错且不重试",
     "https://bgm.tv/user/%ZZ",
     "https://someone@bgm.tv/user/yu_nagi",
   ]) {
-    const { site, requests } = setup(t, async () =>
+    const { site, calls } = setup(t, async () =>
       response(home("yu_nagi"), target),
     );
     await assert.rejects(site.candidate(192026), (error) => {
@@ -82,19 +89,19 @@ test("跨域、非主页及带额外参数的目标均中性报错且不重试",
       assert.equal(error.status, undefined);
       return true;
     });
-    assert.equal(requests.count, 1);
+    assert.equal(calls.length, 1);
   }
 });
 
 test("仅明确的同源登录目标提示检查登录", async (t) => {
-  const { site, requests } = setup(t, async () =>
+  const { site, calls } = setup(t, async () =>
     response("", "https://bgm.tv/login?back=user"),
   );
   await assert.rejects(
     site.resolve("192026"),
     /跳转到登录页面，请检查登录状态/,
   );
-  assert.equal(requests.count, 1);
+  assert.equal(calls.length, 1);
 });
 
 test("跳转主页身份、好友链接或结构不可信时终止而非冒充缺失候选", async (t) => {
@@ -111,7 +118,7 @@ test("跳转主页身份、好友链接或结构不可信时终止而非冒充�
     [missing, 200, /无法识别主页用户/],
     ["", 404, /404/],
   ]) {
-    const { site, requests } = setup(t, async () =>
+    const { site, calls } = setup(t, async () =>
       response(body, "https://bgm.tv/user/yu_nagi", status),
     );
     await assert.rejects(site.candidate(192026), (error) => {
@@ -119,22 +126,22 @@ test("跳转主页身份、好友链接或结构不可信时终止而非冒充�
       assert.doesNotMatch(error.message, /登录/);
       return true;
     });
-    assert.equal(requests.count, 1);
+    assert.equal(calls.length, 1);
   }
 });
 
 test("主页跳转例外不放宽两向关系列表及后续分页", async (t) => {
   for (const direction of ["friends", "rev_friends"]) {
-    const { site, requests } = setup(t, async () =>
+    const { site, calls } = setup(t, async () =>
       response(listing("other", []), `https://bgm.tv/user/other/${direction}`),
     );
     await assert.rejects(
       site.relationships("yu_nagi", direction),
       /非预期页面/,
     );
-    assert.equal(requests.count, 1);
+    assert.equal(calls.length, 1);
   }
-  const { site, requests } = setup(t, async (url) =>
+  const { site, calls } = setup(t, async (url) =>
     url.includes("?page=2")
       ? response(listing("yu_nagi", []), "https://bgm.tv/user/yu_nagi/friends")
       : response(
@@ -144,13 +151,13 @@ test("主页跳转例外不放宽两向关系列表及后续分页", async (t) =
         ),
   );
   await assert.rejects(site.relationships("yu_nagi", "friends"), /非预期页面/);
-  assert.equal(requests.count, 2);
+  assert.equal(calls.length, 2);
 });
 
 test("被拒绝目标上的 429 和 503 不重试也不改变全局限流", async (t) => {
   for (const status of [429, 503]) {
     const waits = [];
-    const { site, requests } = setup(
+    const { site, calls } = setup(
       t,
       async (url) =>
         url.endsWith("/192026")
@@ -160,7 +167,7 @@ test("被拒绝目标上的 429 和 503 不重试也不改变全局限流", asyn
     );
     await assert.rejects(site.candidate(192026), /非预期页面/);
     assert.equal((await site.resolve("self")).id, "self");
-    assert.equal(requests.count, 2);
+    assert.equal(calls.length, 2);
     assert.deepEqual(waits, []);
   }
 });
@@ -170,7 +177,7 @@ test("合法主页目标沿用 HTTP 重试与限流，且只校验最后一次�
     let attempts = 0;
     let time = 0;
     const waits = [];
-    const { site, requests } = setup(
+    const { site, calls } = setup(
       t,
       async (url) => {
         if (++attempts === 1) {
@@ -189,7 +196,7 @@ test("合法主页目标沿用 HTTP 重试与限流，且只校验最后一次�
       },
     );
     assert.equal((await site.candidate(192026)).id, "yu_nagi");
-    assert.equal(requests.count, 2);
+    assert.equal(calls.length, 2);
     assert.deepEqual(waits, [status === 429 ? 5000 : 1000]);
   }
 });
@@ -223,7 +230,7 @@ test("跳转后的正文不响应取消时，仍能停止并释放共享队列",
 });
 
 test("跳转后的正文超时仍按原规则重试两次", async (t) => {
-  const { site, requests } = setup(
+  const { site, calls } = setup(
     t,
     async () => ({
       ok: true,
@@ -234,7 +241,7 @@ test("跳转后的正文超时仍按原规则重试两次", async (t) => {
     { timeout: 5, sleep: async () => {} },
   );
   await assert.rejects(site.candidate(192026), /超时/);
-  assert.equal(requests.count, 3);
+  assert.equal(calls.length, 3);
 });
 
 test("随机填入贯穿真实主页归一和两向校验，未知跳转则保留原端点而不换人", async (t) => {
@@ -243,7 +250,8 @@ test("随机填入贯穿真实主页归一和两向校验，未知跳转则保�
     const commits = [];
     const { site } = setup(t, async (url) => {
       urls.push(url);
-      if (url.endsWith("/192027")) return response("", url, 404);
+      if (/\/user\/\d+$/.test(url) && !url.endsWith("/192026"))
+        return response("", url, 404);
       if (url.endsWith("/192026"))
         return response(
           home("yu_nagi"),
@@ -259,8 +267,6 @@ test("随机填入贯穿真实主页归一和两向校验，未知跳转则保�
       seed: { range: 192026, observed: 192026, checkedAt: 0 },
       random: () => 192025.5 / 192026,
     });
-    await randomUsers.refresh();
-    urls.length = 0;
     const session = createSession({
       site,
       store,
@@ -268,17 +274,26 @@ test("随机填入贯穿真实主页归一和两向校验，未知跳转则保�
       current: { id: "self" },
     });
     await session.random(0);
-    assert.equal(session.state.inputs[0], rejected ? "self" : "yu_nagi");
-    assert.equal(session.state.endpoints[0].id, rejected ? "self" : "yu_nagi");
+    assert.equal(
+      session.state.endpoints[0].input,
+      rejected ? "self" : "yu_nagi",
+    );
+    assert.equal(
+      session.state.endpoints[0].user.id,
+      rejected ? "self" : "yu_nagi",
+    );
     assert.equal(session.state.phase, "idle");
     assert.equal(session.state.result, null);
+    const foregroundUrls = urls.filter((url) =>
+      ["192026", "yu_nagi"].includes(new URL(url).pathname.split("/")[2]),
+    );
     if (rejected) {
-      assert.match(session.state.errors[0], /非预期页面/);
-      assert.deepEqual(urls, ["https://bgm.tv/user/192026"]);
+      assert.match(session.state.endpoints[0].error.message, /非预期页面/);
+      assert.deepEqual(foregroundUrls, ["https://bgm.tv/user/192026"]);
       assert.equal(commits.length, 0);
     } else {
-      assert.equal(session.state.errors[0], "");
-      assert.deepEqual(urls, [
+      assert.equal(session.state.endpoints[0].error, null);
+      assert.deepEqual(foregroundUrls, [
         "https://bgm.tv/user/192026",
         "https://bgm.tv/user/yu_nagi/friends",
         "https://bgm.tv/user/yu_nagi/rev_friends",

@@ -1,3 +1,5 @@
+import { OperationError } from "./errors.mjs";
+
 export function delay(ms, signal) {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
@@ -20,9 +22,12 @@ export function delay(ms, signal) {
     wake();
   });
 }
-class RequestError extends Error {
-  constructor(message, retryable = false, status, url) {
-    super(message);
+class RequestError extends OperationError {
+  constructor(
+    message,
+    { code = "http", retryable = false, status, url, cause } = {},
+  ) {
+    super(code, message, cause);
     this.retryable = retryable;
     this.status = status;
     this.url = url;
@@ -45,10 +50,8 @@ export function createRequests({
   sleep = delay,
   timeout = 30000,
   concurrency = 4,
-  onRequest = () => {},
 }) {
   let active = 0,
-    count = 0,
     limitedUntil = 0;
   const waiting = [];
   function acquire(signal) {
@@ -86,7 +89,10 @@ export function createRequests({
       const cancel = () => controller.abort(signal.reason);
       signal.addEventListener("abort", cancel, { once: true });
       const timer = setTimeout(
-        () => controller.abort(new RequestError("请求超时", true)),
+        () =>
+          controller.abort(
+            new RequestError("请求超时", { code: "timeout", retryable: true }),
+          ),
         timeout,
       );
       let aborted;
@@ -98,8 +104,6 @@ export function createRequests({
         return await Promise.race([
           cancelled,
           (async () => {
-            count++;
-            onRequest(count);
             let response;
             try {
               response = await fetch(url, {
@@ -108,7 +112,11 @@ export function createRequests({
               });
             } catch (error) {
               controller.signal.throwIfAborted();
-              throw new RequestError(error.message, true);
+              throw new RequestError(error.message, {
+                code: "network",
+                retryable: true,
+                cause: error,
+              });
             }
             controller.signal.throwIfAborted();
             const finalUrl = response.url || url;
@@ -121,6 +129,7 @@ export function createRequests({
                 login
                   ? "请求跳转到登录页面，请检查登录状态"
                   : "请求跳转到非预期页面",
+                { code: login ? "login-redirect" : "unexpected-redirect" },
               );
             }
             if (response.status === 429)
@@ -133,17 +142,24 @@ export function createRequests({
                 response.status === 429
                   ? "HTTP 429：原站限流"
                   : `HTTP ${response.status}：读取失败`,
-                response.status === 408 ||
-                  response.status === 429 ||
-                  (response.status >= 500 && response.status <= 599),
-                response.status,
-                finalUrl,
+                {
+                  retryable:
+                    response.status === 408 ||
+                    response.status === 429 ||
+                    (response.status >= 500 && response.status <= 599),
+                  status: response.status,
+                  url: finalUrl,
+                },
               );
             try {
               return { text: await response.text(), url: finalUrl };
             } catch (error) {
               controller.signal.throwIfAborted();
-              throw new RequestError(error.message, true);
+              throw new RequestError(error.message, {
+                code: "body-read",
+                retryable: true,
+                cause: error,
+              });
             }
           })(),
         ]);
@@ -174,9 +190,6 @@ export function createRequests({
     }
   }
   return {
-    get count() {
-      return count;
-    },
     async text(url, options) {
       return (await page(url, options)).text;
     },

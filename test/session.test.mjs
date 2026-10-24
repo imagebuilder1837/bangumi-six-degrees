@@ -20,7 +20,7 @@ test("停止后立即重开探索，旧任务的收尾不能解锁或覆盖新�
   document.querySelector('[aria-label="六度分隔"]').click();
   input(env.window, "起点用户", "alice");
   input(env.window, "终点用户", "bob");
-  await until(() => session.state.endpoints.every(Boolean));
+  await until(() => session.state.endpoints.every(({ user }) => !!user));
   document.querySelector('[data-action="explore"]').click();
   await until(() => gates.length === 1);
   document.querySelector('[data-action="stop"]').click();
@@ -57,7 +57,7 @@ test("修改端点、交换或切换模式立即清空结果与旧状态，重�
   };
   input(env.window, "终点用户", "alice");
   assertCleared();
-  await until(() => session.state.endpoints[1]?.id === "alice");
+  await until(() => session.state.endpoints[1].user?.id === "alice");
   await session.run();
   assert.equal(session.state.result.status, "found");
   session.swap();
@@ -92,21 +92,27 @@ test("新页面忽略并精确清理旧成功条件，不恢复结果或自动�
   });
   const session = initialize(first.window, { fetch: first.fetch });
   first.window.document.querySelector('[aria-label="六度分隔"]').click();
-  assert.deepEqual(session.state.inputs, ["alice", ""]);
+  assert.deepEqual(
+    session.state.endpoints.map(({ input }) => input),
+    ["alice", ""],
+  );
   assert.equal(session.state.mode, "mutual");
   assert.equal(session.state.result, null);
   assert.equal(first.urls.length, 0);
   assert.equal(first.window.localStorage.getItem(key), null);
   assert.equal(first.window.localStorage.getItem("unrelated"), "保留");
   input(first.window, "终点用户", "bob");
-  await until(() => session.state.endpoints.every(Boolean));
+  await until(() => session.state.endpoints.every(({ user }) => !!user));
   await session.run();
   assert.equal(session.state.result.status, "found");
   assert.equal(first.window.localStorage.getItem(key), null);
   const second = browser({ indexedDB: first.indexedDB });
   const fresh = initialize(second.window, { fetch: second.fetch });
   await fresh.open();
-  assert.deepEqual(fresh.state.inputs, ["alice", ""]);
+  assert.deepEqual(
+    fresh.state.endpoints.map(({ input }) => input),
+    ["alice", ""],
+  );
   assert.equal(fresh.state.result, null);
   assert.equal(second.urls.length, 0);
   first.window.close();
@@ -129,7 +135,7 @@ test("关闭仅隐藏正在进行的搜索，重开不会重复请求", async ()
   document.querySelector('[aria-label="六度分隔"]').click();
   input(env.window, "起点用户", "alice");
   input(env.window, "终点用户", "bob");
-  await until(() => session.state.endpoints.every(Boolean));
+  await until(() => session.state.endpoints.every(({ user }) => !!user));
   document.querySelector('[data-action="explore"]').click();
   await until(() => waiting);
   document.querySelector('[aria-label="关闭六度分隔"]').click();
@@ -156,17 +162,20 @@ test("较慢的旧端点解析不能覆盖新的输入，切换模式和交换�
   input(env.window, "起点用户", "slow");
   await until(() => env.urls.length === 1);
   input(env.window, "起点用户", "bob");
-  await until(() => session.state.endpoints[0]?.id === "bob");
+  await until(() => session.state.endpoints[0].user?.id === "bob");
   gate.resolve();
   await new Promise((resolve) => setTimeout(resolve, 5));
-  assert.equal(session.state.inputs[0], "bob");
+  assert.equal(session.state.endpoints[0].input, "bob");
   const count = env.urls.length;
   const mode = document.querySelector("select");
   mode.value = "mutual";
   mode.dispatchEvent(new env.window.Event("change"));
   document.querySelector('[data-action="swap"]').click();
   assert.equal(env.urls.length, count);
-  assert.deepEqual(session.state.inputs, ["", "bob"]);
+  assert.deepEqual(
+    session.state.endpoints.map(({ input }) => input),
+    ["", "bob"],
+  );
   env.window.close();
 });
 
@@ -187,7 +196,7 @@ test("缓存不可用时首次打开不取数，用户主动探索仍可成功",
   assert.equal(session.state.phase, "idle");
   assert.equal(env.urls.length, 0);
   input(env.window, "终点用户", "bob");
-  await until(() => session.state.endpoints.every(Boolean));
+  await until(() => session.state.endpoints.every(({ user }) => !!user));
   document.querySelector('[data-action="explore"]').click();
   await until(() => session.state.result?.status === "found");
   assert.match(session.state.warning, /缓存/);
@@ -205,10 +214,7 @@ test("入口只挂载一次，匿名快捷项禁用且空输入不会发出请�
   assert.equal(document.querySelector('[data-fill="self"]').disabled, true);
   document.querySelector('[data-action="explore"]').click();
   assert.equal(env.urls.length, 0);
-  assert.match(
-    document.querySelector('[data-endpoint="1"] .bsd-error').textContent,
-    /请先填入/,
-  );
+  assert.match(document.querySelector(".bsd-hint").textContent, /请先填入/);
   env.window.close();
 });
 
@@ -223,7 +229,7 @@ test("最终中间用户直接展示扫描头像昵称，不额外请求其主�
   session.setMode("directed");
   input(env.window, "起点用户", "alice");
   input(env.window, "终点用户", "bob");
-  await until(() => session.state.endpoints.every(Boolean));
+  await until(() => session.state.endpoints.every(({ user }) => !!user));
   document.querySelector('[data-action="explore"]').click();
   await until(() => session.state.result?.status === "found");
   const links = [...document.querySelectorAll(".bsd-path a")];

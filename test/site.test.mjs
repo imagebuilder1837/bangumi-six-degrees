@@ -90,8 +90,14 @@ test("分页完整获取后再返回关系，第一页别名不重复抓取", as
 });
 
 test("不接受其他网站链接和无法解释的列表分页", () => {
-  assert.throws(() => normalizeInput("https://example.com/user/alice"));
-  assert.throws(() => normalizeInput("https://bgm.tv/user/a%2Fb"));
+  for (const input of [
+    "bad/name",
+    "https://",
+    "https://example.com/user/alice",
+    "https://bgm.tv/user/a%2Fb",
+    "https://bgm.tv/user/%ZZ",
+  ])
+    assert.throws(() => normalizeInput(input), { code: "invalid-input" });
   assert.throws(() =>
     readRelationships(
       window,

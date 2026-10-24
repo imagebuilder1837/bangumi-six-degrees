@@ -56,16 +56,12 @@ export function initialize(
   } catch {
     return;
   }
-  let session;
-  const requests = createRequests({
-    fetch,
-    onRequest: (count) => session?.countRequests(count),
-  });
+  const requests = createRequests({ fetch });
   const site = createSite({ window, requests });
   const store = browserStore(window);
   const storage = () => window.localStorage;
   const randomUsers = createRandomUsers({ site, store, storage });
-  session = createSession({ site, store, storage, current, randomUsers });
+  const session = createSession({ site, store, storage, current, randomUsers });
   mountView(window, session, { self: selfIdentifier(window), services });
   window.addEventListener("pagehide", () => {
     session.stop();
