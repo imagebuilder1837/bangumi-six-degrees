@@ -41,10 +41,11 @@
     });
   }
   class RequestError extends Error {
-    constructor(message, retryable = false, status) {
+    constructor(message, retryable = false, status, url) {
       super(message);
       this.retryable = retryable;
       this.status = status;
+      this.url = url;
     }
   }
   function retryAt(value, now) {
@@ -96,7 +97,7 @@
       if (next) next.resolve();
       else active--;
     }
-    async function attempt(url, signal) {
+    async function attempt(url, signal, acceptRedirect) {
       await acquire(signal);
       try {
         while (now() < limitedUntil) await sleep(limitedUntil - now(), signal);
@@ -130,8 +131,18 @@
                 throw new RequestError(error.message, true);
               }
               controller.signal.throwIfAborted();
-              if (response.url && response.url !== url)
-                throw new RequestError("请求跳转到其他页面，请检查登录状态");
+              const finalUrl = response.url || url;
+              if (finalUrl !== url && !acceptRedirect(finalUrl)) {
+                const target = new URL(finalUrl);
+                const login =
+                  target.origin === new URL(url).origin &&
+                  /^\/login\/?$/.test(target.pathname);
+                throw new RequestError(
+                  login
+                    ? "请求跳转到登录页面，请检查登录状态"
+                    : "请求跳转到非预期页面",
+                );
+              }
               if (response.status === 429)
                 limitedUntil = Math.max(
                   limitedUntil,
@@ -146,9 +157,10 @@
                     response.status === 429 ||
                     (response.status >= 500 && response.status <= 599),
                   response.status,
+                  finalUrl,
                 );
               try {
-                return await response.text();
+                return { text: await response.text(), url: finalUrl };
               } catch (error) {
                 controller.signal.throwIfAborted();
                 throw new RequestError(error.message, true);
@@ -164,24 +176,34 @@
         release();
       }
     }
+    async function page(
+      url,
+      {
+        signal = new AbortController().signal,
+        acceptRedirect = () => false,
+      } = {},
+    ) {
+      for (let retry = 0; ; retry++) {
+        try {
+          return await attempt(url, signal, acceptRedirect);
+        } catch (error) {
+          signal.throwIfAborted();
+          if (!error.retryable || retry === 2) throw error;
+          await sleep(
+            Math.max(1000 * 2 ** retry, limitedUntil - now()),
+            signal,
+          );
+        }
+      }
+    }
     return {
       get count() {
         return count;
       },
-      async text(url, { signal = new AbortController().signal } = {}) {
-        for (let retry = 0; ; retry++) {
-          try {
-            return await attempt(url, signal);
-          } catch (error) {
-            signal.throwIfAborted();
-            if (!error.retryable || retry === 2) throw error;
-            await sleep(
-              Math.max(1000 * 2 ** retry, limitedUntil - now()),
-              signal,
-            );
-          }
-        }
+      async text(url, options) {
+        return (await page(url, options)).text;
       },
+      page,
     };
   }
 
@@ -206,7 +228,7 @@
     const anchor = document.querySelector(
       "#headerProfile h1.nameSingle .inner > .name > a[href]",
     );
-    if (!anchor) throw new Error("无法识别主页用户，请检查登录状态或原站页面");
+    if (!anchor) throw new Error("无法识别主页用户，请检查原站页面");
     const url = new URL(anchor.getAttribute("href"), base);
     const match = /^\/user\/([^/]+)\/?$/.exec(url.pathname);
     if (url.origin !== new URL(base).origin || !match)
@@ -371,20 +393,39 @@
     async function home(input, options, candidate = false) {
       const id = normalizeInput(input);
       const url = `${origin}/user/${encodeURIComponent(id)}`;
-      let html;
+      let page;
       try {
-        html = await requests.text(url, options);
+        page = await requests.page(url, {
+          ...options,
+          acceptRedirect(target) {
+            try {
+              const final = new URL(target);
+              return (
+                final.origin === origin &&
+                !final.search &&
+                !final.hash &&
+                !!normalizeInput(target)
+              );
+            } catch {
+              return false;
+            }
+          },
+        });
       } catch (error) {
         options?.signal?.throwIfAborted();
-        if (candidate && error.status === 404) return null;
+        if (candidate && error.status === 404 && error.url === url) return null;
         throw error;
       }
+      const redirected = page.url !== url;
       const document = new window.DOMParser().parseFromString(
-        html,
+        page.text,
         "text/html",
       );
-      if (candidate && missingUser(document)) return null;
-      return readHome(document, url);
+      if (candidate && !redirected && missingUser(document)) return null;
+      const user = readHome(document, page.url);
+      if (redirected && normalizeInput(page.url) !== user.id)
+        throw new Error("跳转后的主页身份不匹配");
+      return user;
     }
     return {
       resolve: (input, options) => home(input, options),

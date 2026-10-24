@@ -19,7 +19,7 @@ function identity(document, base) {
   const anchor = document.querySelector(
     "#headerProfile h1.nameSingle .inner > .name > a[href]",
   );
-  if (!anchor) throw new Error("无法识别主页用户，请检查登录状态或原站页面");
+  if (!anchor) throw new Error("无法识别主页用户，请检查原站页面");
   const url = new URL(anchor.getAttribute("href"), base);
   const match = /^\/user\/([^/]+)\/?$/.exec(url.pathname);
   if (url.origin !== new URL(base).origin || !match)
@@ -172,17 +172,39 @@ export function createSite({
   async function home(input, options, candidate = false) {
     const id = normalizeInput(input);
     const url = `${origin}/user/${encodeURIComponent(id)}`;
-    let html;
+    let page;
     try {
-      html = await requests.text(url, options);
+      page = await requests.page(url, {
+        ...options,
+        acceptRedirect(target) {
+          try {
+            const final = new URL(target);
+            return (
+              final.origin === origin &&
+              !final.search &&
+              !final.hash &&
+              !!normalizeInput(target)
+            );
+          } catch {
+            return false;
+          }
+        },
+      });
     } catch (error) {
       options?.signal?.throwIfAborted();
-      if (candidate && error.status === 404) return null;
+      if (candidate && error.status === 404 && error.url === url) return null;
       throw error;
     }
-    const document = new window.DOMParser().parseFromString(html, "text/html");
-    if (candidate && missingUser(document)) return null;
-    return readHome(document, url);
+    const redirected = page.url !== url;
+    const document = new window.DOMParser().parseFromString(
+      page.text,
+      "text/html",
+    );
+    if (candidate && !redirected && missingUser(document)) return null;
+    const user = readHome(document, page.url);
+    if (redirected && normalizeInput(page.url) !== user.id)
+      throw new Error("跳转后的主页身份不匹配");
+    return user;
   }
   return {
     resolve: (input, options) => home(input, options),
