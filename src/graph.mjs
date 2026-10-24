@@ -6,8 +6,7 @@ function setAt(map, id) {
 
 // An observation is a complete directional list, not just positive edges.
 export class ObservationGraph {
-  constructor(network = false) {
-    this.network = network;
+  constructor() {
     this.records = new Map();
     this.outgoing = new Map();
     this.incoming = new Map();
@@ -36,13 +35,7 @@ export class ObservationGraph {
       members: new Set(snapshot.members ?? []),
       order: order ?? ++this.sequence,
     };
-    if (
-      previous &&
-      (this.network
-        ? previous.order > record.order
-        : previous.fetchedAt > record.fetchedAt)
-    )
-      return new Set();
+    if (previous && previous.order > record.order) return new Set();
     this.records.set(key(id, direction), record);
     for (const other of new Set([
       ...(previous?.members ?? []),
@@ -70,10 +63,9 @@ export class ObservationGraph {
     const forward = this.get(from, "friends");
     const reverse = this.get(to, "rev_friends");
     if (!forward && !reverse) return false;
-    const stamp = (record) => (this.network ? record.order : record.fetchedAt);
     const chosen = !forward
       ? reverse
-      : !reverse || stamp(forward) >= stamp(reverse)
+      : !reverse || forward.order >= reverse.order
         ? forward
         : reverse;
     return chosen.members.has(chosen === forward ? to : from);

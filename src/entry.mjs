@@ -3,6 +3,7 @@ import { createSite, readUser } from "./site.mjs";
 import { browserStore } from "./data.mjs";
 import { createSession } from "./session.mjs";
 import { mountView } from "./view.mjs";
+import { createRandomUsers } from "./random-users.mjs";
 
 function selfIdentifier(window) {
   if (typeof window.CHOBITS_USERNAME === "string" && window.CHOBITS_USERNAME)
@@ -10,6 +11,7 @@ function selfIdentifier(window) {
   const anchor = window.document.querySelector(
     '#dock a[href^="/user/"], #badgeUserPanel a.avatar[href]',
   );
+  if (!anchor) return;
   try {
     const url = new URL(
       anchor?.getAttribute("href") ?? "",
@@ -32,7 +34,7 @@ export function initialize(
   if (
     location.protocol !== "https:" ||
     !["bgm.tv", "bangumi.tv", "chii.in"].includes(location.host) ||
-    !/^\/user\/[^/]+\/(friends|rev_friends)\/?$/.test(location.pathname)
+    !/^\/user\/[^/]+\/?$/.test(location.pathname)
   )
     return;
   if (!document.body) {
@@ -44,9 +46,13 @@ export function initialize(
     return;
   }
   if (document.getElementById("bangumi-six-degrees-entry")) return;
+  const services = document.querySelector(
+    "#user_home .user_box ul.network_service",
+  );
+  if (!services) return;
   let current;
   try {
-    current = readUser(document, location.href).id;
+    current = readUser(document, location.href);
   } catch {
     return;
   }
@@ -56,11 +62,15 @@ export function initialize(
     onRequest: (count) => session?.countRequests(count),
   });
   const site = createSite({ window, requests });
-  session = createSession({
-    site,
-    store: browserStore(window),
-    storage: () => window.localStorage,
+  const store = browserStore(window);
+  const storage = () => window.localStorage;
+  const randomUsers = createRandomUsers({ site, store, storage });
+  session = createSession({ site, store, storage, current, randomUsers });
+  mountView(window, session, { self: selfIdentifier(window), services });
+  window.addEventListener("pagehide", () => {
+    session.stop();
+    randomUsers.cancel();
   });
-  mountView(window, session, { self: selfIdentifier(window), current });
+
   return session;
 }

@@ -2,14 +2,11 @@
 // @name         Bangumi 六度分隔
 // @namespace    https://github.com/imagebuilder1837/bangumi-six-degrees
 // @version      0.1.0
-// @description  探索两位 Bangumi 用户之间的最短好友关系链，支持无向关联、单向好友与双向好友三种模式。
+// @description  探索两位 Bangumi 用户之间的最短好友关系链，支持双向好友、单向好友与无向关联三种模式。
 // @author       imagebuilder1837
-// @match        https://bgm.tv/user/*/friends
-// @match        https://bgm.tv/user/*/rev_friends
-// @match        https://bangumi.tv/user/*/friends
-// @match        https://bangumi.tv/user/*/rev_friends
-// @match        https://chii.in/user/*/friends
-// @match        https://chii.in/user/*/rev_friends
+// @match        https://bgm.tv/user/*
+// @match        https://bangumi.tv/user/*
+// @match        https://chii.in/user/*
 // @run-at       document-idle
 // @grant        none
 // @license      MIT
@@ -191,7 +188,7 @@
   const hosts = new Set(["bgm.tv", "bangumi.tv", "chii.in"]);
   function identifier$1(value) {
     if (!value || /[\s/?#@]/u.test(value))
-      throw new Error("请输入有效的用户标识、数字 ID 或用户主页链接");
+      throw new Error("请输入有效的用户标识");
     return value;
   }
   function normalizeInput(input) {
@@ -200,7 +197,7 @@
       const url = new URL(text);
       const match = /^\/user\/([^/]+)\/?$/.exec(url.pathname);
       if (!hosts.has(url.host) || url.username || url.password || !match)
-        throw new Error("请输入 Bangumi 用户主页链接");
+        throw new Error("请输入有效的用户标识");
       return identifier$1(decodeURIComponent(match[1]));
     }
     return identifier$1(text.replace(/^@/, ""));
@@ -847,7 +844,6 @@
     };
   }
   function createDataSource({
-    kind,
     store,
     site,
     initialUsers = [],
@@ -862,7 +858,6 @@
       warned = true;
     };
     return {
-      kind,
       async estimate(keys, { signal } = {}) {
         if (!keys.length) return 0;
         try {
@@ -881,21 +876,6 @@
         }
       },
       async load(keys, { signal } = {}) {
-        if (kind === "cache") {
-          const data = await store.read(
-            {
-              relationships: keys,
-              users: [...new Set(keys.map(([id]) => id))],
-            },
-            { signal },
-          );
-          for (const [id, user] of Object.entries(data.users))
-            profiles.set(id, { id, ...user });
-          return keys.flatMap(([id, direction]) => {
-            const snapshot = data.relationships[id]?.[direction];
-            return snapshot ? [{ id, direction, snapshot }] : [];
-          });
-        }
         return Promise.all(
           keys.map(([id, direction]) => {
             const key = JSON.stringify([id, direction]);
@@ -949,12 +929,7 @@
           }),
         );
       },
-      async users(ids, { signal } = {}) {
-        if (kind === "cache") {
-          const data = await store.read({ users: ids }, { signal });
-          for (const [id, user] of Object.entries(data.users))
-            profiles.set(id, { id, ...user });
-        }
+      async users(ids) {
         return new Map(
           ids.map((id) => [
             id,
@@ -973,8 +948,7 @@
 
   // An observation is a complete directional list, not just positive edges.
   class ObservationGraph {
-    constructor(network = false) {
-      this.network = network;
+    constructor() {
       this.records = new Map();
       this.outgoing = new Map();
       this.incoming = new Map();
@@ -1003,13 +977,7 @@
         members: new Set(snapshot.members ?? []),
         order: order ?? ++this.sequence,
       };
-      if (
-        previous &&
-        (this.network
-          ? previous.order > record.order
-          : previous.fetchedAt > record.fetchedAt)
-      )
-        return new Set();
+      if (previous && previous.order > record.order) return new Set();
       this.records.set(key(id, direction), record);
       for (const other of new Set([
         ...(previous?.members ?? []),
@@ -1037,11 +1005,9 @@
       const forward = this.get(from, "friends");
       const reverse = this.get(to, "rev_friends");
       if (!forward && !reverse) return false;
-      const stamp = (record) =>
-        this.network ? record.order : record.fetchedAt;
       const chosen = !forward
         ? reverse
-        : !reverse || stamp(forward) >= stamp(reverse)
+        : !reverse || forward.order >= reverse.order
           ? forward
           : reverse;
       return chosen.members.has(chosen === forward ? to : from);
@@ -1167,7 +1133,7 @@
   }) {
     if (!["directed", "undirected", "mutual"].includes(mode))
       throw new Error("未知关系模式");
-    const graph = new ObservationGraph(source.kind === "network");
+    const graph = new ObservationGraph();
     const sides = [new SearchSide(start), new SearchSide(end)];
     const attempted = new Set();
     let observations = 0;
@@ -1261,36 +1227,32 @@
     }
   }
 
-  const memoryKey = "bangumi-six-degrees:last-success";
-  const modes = ["undirected", "directed", "mutual"];
-  function readMemory(storage) {
+  const modes = ["mutual", "directed", "undirected"];
+  const initialMessage = "选两位班友，看看彼此隔着几次相遇。";
+  function createSession({
+    site,
+    store,
+    storage,
+    current,
+    randomUsers,
+    now = Date.now,
+  }) {
     try {
-      const value = JSON.parse(storage()?.getItem(memoryKey) ?? "null");
-      if (
-        value &&
-        [value.start, value.end].every(
-          (id) => typeof id === "string" && id && !/[\s/?#@]/u.test(id),
-        ) &&
-        modes.includes(value.mode)
-      )
-        return value;
+      storage?.()?.removeItem("bangumi-six-degrees:last-success");
     } catch {
-      /* Storage denial or malformed data does not prevent opening. */
+      // Storage denial must not prevent opening or network searches.
     }
-  }
-  function createSession({ site, store, storage, now = Date.now }) {
     const state = {
       visible: false,
       phase: "idle",
-      kind: null,
-      mode: "undirected",
-      inputs: ["", ""],
-      endpoints: [null, null],
+      mode: "mutual",
+      inputs: [current?.id ?? "", ""],
+      endpoints: [current ? { ...current, fetchedAt: now() } : null, null],
       errors: ["", ""],
       resolving: [false, false],
+      randomizing: [false, false],
       result: null,
-      stale: false,
-      message: "选两位班友，看看彼此隔着几次相遇。",
+      message: initialMessage,
       progress: { visited: 0, observations: 0 },
       requests: 0,
       warning: "",
@@ -1303,49 +1265,77 @@
     const versions = [0, 0],
       resolving = [null, null],
       promises = [null, null];
-    let opened = false,
-      controller,
+    let controller,
       baseline = 0;
     const warn = (text) => {
       state.warning = text;
       emit();
     };
-    function setInput(index, value) {
-      if (busy()) return;
+    function clearResult() {
+      state.result = null;
+      state.warning = "";
+      state.progress = { visited: 0, observations: 0 };
+      if (!busy()) {
+        state.phase = "idle";
+        state.message = initialMessage;
+      }
+    }
+    function cancelEndpoint(index) {
       versions[index]++;
       resolving[index]?.abort();
       promises[index] = null;
       state.resolving[index] = false;
+      state.randomizing[index] = false;
+    }
+    function setInput(index, value) {
+      if (busy()) return;
+      cancelEndpoint(index);
       state.inputs[index] = value;
       state.endpoints[index] = null;
       state.errors[index] = "";
-      state.stale = !!state.result;
+      clearResult();
       emit();
     }
-    function resolve(index) {
-      if (promises[index]) return promises[index];
-      const input = state.inputs[index];
-      if (!input.trim()) return Promise.resolve();
-      const version = ++versions[index];
+    function selectedIds() {
+      const ids = state.endpoints.filter(Boolean).map((user) => user.id);
+      for (const input of state.inputs) {
+        try {
+          ids.push(normalizeInput(input));
+        } catch {
+          // An unfinished input is not a confirmed identity.
+        }
+      }
+      return new Set(ids);
+    }
+    function loadEndpoint(index, task, random = false) {
+      cancelEndpoint(index);
+      const version = versions[index];
       const abort = new AbortController();
       resolving[index] = abort;
       state.resolving[index] = true;
+      state.randomizing[index] = random;
       state.errors[index] = "";
       emit();
       const promise = (async () => {
         try {
-          const user = await site.resolve(input, { signal: abort.signal });
-          if (versions[index] !== version) return;
+          let user;
+          do {
+            user = await task(abort.signal);
+            if (versions[index] !== version || abort.signal.aborted) return;
+            // Another endpoint may have published the same candidate meanwhile.
+          } while (random && selectedIds().has(user.id));
           state.inputs[index] = user.id;
           state.endpoints[index] = { ...user, fetchedAt: now() };
+          clearResult();
         } catch (error) {
           if (versions[index] === version && !abort.signal.aborted) {
             state.errors[index] = error.message;
-            state.endpoints[index] = null;
+            if (!random) state.endpoints[index] = null;
           }
         } finally {
           if (versions[index] === version) {
             state.resolving[index] = false;
+            state.randomizing[index] = false;
             promises[index] = null;
             emit();
           }
@@ -1354,45 +1344,28 @@
       promises[index] = promise;
       return promise;
     }
-    async function execute(kind, conditions, abort) {
+    function resolve(index) {
+      if (promises[index]) return promises[index];
+      const input = state.inputs[index];
+      if (!input.trim() || state.endpoints[index]?.id === input)
+        return Promise.resolve();
+      return loadEndpoint(index, (signal) => site.resolve(input, { signal }));
+    }
+    async function execute(conditions, abort) {
       baseline = state.requests;
       state.phase = "running";
-      state.kind = kind;
-      state.warning = "";
-      state.stale = !!state.result;
-      state.progress = { visited: 0, observations: 0 };
-      state.message =
-        kind === "cache"
-          ? "正在确认缓存能否证明最短路径…"
-          : "沿着好友关系，寻找最短的相遇路线…";
+      clearResult();
+      state.message = "沿着好友关系，寻找最短的相遇路线…";
       emit();
       const source = createDataSource({
-        kind,
         store,
         site,
-        initialUsers: kind === "network" ? state.endpoints.filter(Boolean) : [],
+        initialUsers: state.endpoints.filter(Boolean),
         onWarning: (text) => {
           if (controller === abort && !abort.signal.aborted) warn(text);
         },
       });
       try {
-        if (kind === "cache") {
-          try {
-            const profiles = await source.users(
-              [conditions.start, conditions.end],
-              { signal: abort.signal },
-            );
-            abort.signal.throwIfAborted();
-            state.endpoints = [
-              profiles.get(conditions.start),
-              profiles.get(conditions.end),
-            ];
-            emit();
-          } catch (error) {
-            abort.signal.throwIfAborted();
-            warn(`用户资料缓存不可用：${error.message}`);
-          }
-        }
         const result = await search({
           ...conditions,
           source,
@@ -1406,38 +1379,26 @@
         });
         abort.signal.throwIfAborted();
         if (result.status === "found") {
-          let users;
-          try {
-            users = await source.users(result.path, { signal: abort.signal });
-          } catch (error) {
-            abort.signal.throwIfAborted();
-            warn(`资料读取失败：${error.message}`);
-            users = new Map();
-          }
+          const users = await source.users(result.path, {
+            signal: abort.signal,
+          });
           abort.signal.throwIfAborted();
           state.result = {
             status: "found",
-            kind,
             conditions,
             path: result.path.map(
               (id) => users.get(id) ?? { id, name: id, avatar: "" },
             ),
           };
-          state.message = `${kind === "cache" ? "缓存已证明" : "已确认"}最短路径 · ${result.path.length - 1} 跳`;
-          try {
-            storage()?.setItem(memoryKey, JSON.stringify(conditions));
-          } catch {
-            warn("无法记忆本次选择；搜索结果不受影响");
-          }
+          state.message = `已确认最短路径 · ${result.path.length - 1} 跳`;
         } else {
-          state.result = { ...result, kind, conditions };
+          state.result = { ...result, conditions };
           state.message = {
             unreachable: "此关系模式下没有可达路径。",
-            incomplete: "缓存不足以证明最短路径，点击探索获取最新关系。",
+            incomplete: "关系数据不完整，本次未能确定路径。",
             invalid: "端点属于已识别的原站无效节点，请换一位班友。",
           }[result.status];
         }
-        state.stale = false;
         state.phase = "complete";
       } catch (error) {
         if (controller !== abort) return;
@@ -1446,7 +1407,7 @@
         state.phase = stopped ? "stopped" : "error";
         state.message = stopped
           ? "已停止。已获取的有效关系缓存保留。"
-          : `${kind === "cache" ? "缓存不可用，不会自动联网探索" : "本次未能确定路径"}：${error.message}`;
+          : `本次未能确定路径：${error.message}`;
       } finally {
         if (controller === abort) {
           controller = undefined;
@@ -1465,22 +1426,9 @@
       },
       setInput,
       resolve,
-      async open() {
+      open() {
         state.visible = true;
         emit();
-        if (opened) return;
-        opened = true;
-        const previous = readMemory(storage);
-        if (!previous) return;
-        state.inputs = [previous.start, previous.end];
-        state.mode = previous.mode;
-        state.endpoints = state.inputs.map((id) => ({
-          id,
-          name: id,
-          avatar: "",
-        }));
-        controller = new AbortController();
-        await execute("cache", previous, controller);
       },
       close() {
         state.visible = false;
@@ -1489,22 +1437,17 @@
       setMode(mode) {
         if (!busy() && modes.includes(mode)) {
           state.mode = mode;
-          state.stale = !!state.result;
+          clearResult();
           emit();
         }
       },
       swap() {
         if (busy()) return;
-        for (let index = 0; index < 2; index++) {
-          versions[index]++;
-          resolving[index]?.abort();
-          promises[index] = null;
-        }
+        for (let index = 0; index < 2; index++) cancelEndpoint(index);
         state.inputs.reverse();
         state.endpoints.reverse();
         state.errors.reverse();
-        state.resolving = [false, false];
-        state.stale = !!state.result;
+        clearResult();
         emit();
       },
       async fill(index, id) {
@@ -1512,8 +1455,20 @@
         setInput(index, id);
         await resolve(index);
       },
-      async run() {
+      async random(index) {
         if (busy()) return;
+        await loadEndpoint(
+          index,
+          (signal) =>
+            randomUsers.pick({
+              signal,
+              exclude: selectedIds,
+            }),
+          true,
+        );
+      },
+      async run() {
+        if (busy() || state.randomizing.some(Boolean)) return;
         if (state.inputs.some((value) => !value.trim())) {
           state.errors = state.inputs.map((value) =>
             value.trim() ? "" : "请先填入用户",
@@ -1521,6 +1476,7 @@
           emit();
           return;
         }
+        clearResult();
         const abort = new AbortController();
         controller = abort;
         state.phase = "resolving";
@@ -1540,7 +1496,6 @@
           return;
         }
         await execute(
-          "network",
           {
             start: state.endpoints[0].id,
             end: state.endpoints[1].id,
@@ -1550,14 +1505,10 @@
         );
       },
       stop() {
-        if (!busy()) return;
+        if (!busy() && !state.resolving.some(Boolean)) return;
         controller?.abort(new DOMException("用户停止探索", "AbortError"));
-        for (let index = 0; index < 2; index++) {
-          versions[index]++;
-          resolving[index]?.abort();
-          promises[index] = null;
-          state.resolving[index] = false;
-        }
+        randomUsers?.cancel();
+        for (let index = 0; index < 2; index++) cancelEndpoint(index);
         state.phase = "stopped";
         state.message = "已停止。已获取的有效关系缓存保留。";
         emit();
@@ -1574,26 +1525,26 @@
   }
 
   const styles = `
-.bsd-launcher{position:fixed;right:25px;bottom:85px;z-index:9999;width:52px;height:52px;border:1px solid #f4bed0;border-radius:50%;background:#fff9fc;color:#f091a8;box-shadow:0 3px 14px #0002;cursor:pointer;transition:transform .2s,box-shadow .2s}
-.bsd-launcher:hover{transform:translateY(-3px) rotate(-8deg);box-shadow:0 5px 18px #f091a855}.bsd-launcher svg{width:34px;height:34px}
 .bsd-overlay{--bsd-bg:#fff;--bsd-fg:#555;--bsd-soft:#f8f5f6;--bsd-line:#e8dfe3;position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;background:#0005;box-sizing:border-box}
 .bsd-overlay[hidden],.bsd-dialog[hidden]{display:none!important}
 .bsd-dialog{color:var(--bsd-fg);background:var(--bsd-bg);border:1px solid var(--bsd-line);border-radius:16px;box-shadow:0 16px 65px #0004;width:min(850px,100%);max-height:90dvh;min-height:430px;display:flex;flex-direction:column;font:14px/1.6 Arial,sans-serif;overflow:hidden;text-align:left}
 .bsd-dialog *{box-sizing:border-box}.bsd-dialog button,.bsd-dialog input,.bsd-dialog select{font:inherit;color:inherit}
 .bsd-dialog button{cursor:pointer}.bsd-dialog button:disabled{cursor:default;opacity:.5}
-.bsd-dialog :focus-visible,.bsd-launcher:focus-visible{outline:2px solid #f091a8;outline-offset:3px}
+.bsd-dialog :focus-visible,.bsd-entry-link:focus-visible{outline:2px solid #f091a8;outline-offset:3px}
 .bsd-header{display:flex;align-items:center;justify-content:space-between;padding:17px 22px;border-bottom:1px solid var(--bsd-line)}.bsd-header h2{font-size:20px;margin:0;color:var(--bsd-fg)}.bsd-header small{opacity:.65}
 .bsd-close{border:0;background:none;font-size:25px!important;padding:0 8px}
 .bsd-body{padding:22px;overflow:auto;overscroll-behavior:contain;flex:1}
 .bsd-top{display:grid;grid-template-columns:minmax(0,1fr) 130px minmax(0,1fr);align-items:center;gap:14px}
 .bsd-endpoint{display:grid;grid-template-columns:48px minmax(0,1fr);gap:10px;align-items:start}
-.bsd-avatar{width:48px;height:48px;border-radius:8px;object-fit:cover;background:var(--bsd-soft)}
-.bsd-input{display:flex;align-items:center;gap:4px;border-bottom:2px solid var(--bsd-line)}.bsd-input input{min-width:0;width:100%;border:0;background:none;padding:5px 0;outline-offset:0}
+.bsd-avatar-link{display:block;border-radius:8px}.bsd-avatar-link:not([href]){cursor:default}
+.bsd-avatar{display:block;width:48px;height:48px;border-radius:8px;object-fit:cover;background:var(--bsd-soft)}
+.bsd-endpoint-name{display:block;min-height:18px;font-size:13px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bsd-input{display:flex;width:100%;max-width:200px;align-items:center;gap:4px;border-bottom:2px solid var(--bsd-line);font-size:12px;line-height:18px}.bsd-input input{min-width:0;width:100%;border:0;background:none;padding:1px 0;outline-offset:0}
 .bsd-shortcuts{display:flex;gap:9px;margin-top:4px}.bsd-shortcuts button,.bsd-swap{border:0;background:none;color:#d57c96!important;font-size:12px!important;padding:2px 0}
 .bsd-error{display:block;color:#c75a70;min-height:1.3em;font-size:11px}.bsd-bridge{text-align:center}.bsd-bridge select{width:100%;border:1px solid var(--bsd-line);background:var(--bsd-soft);border-radius:15px;padding:4px}
 .bsd-arrow{display:block;color:#f091a8;font-size:30px;line-height:1.2}.bsd-swap-row{text-align:center;margin:5px 0 16px}
 .bsd-results{min-height:155px;display:flex;flex-direction:column;justify-content:center;text-align:center;border-radius:12px;background:var(--bsd-soft);padding:18px}
-.bsd-message{margin:5px 0}.bsd-progress,.bsd-warning,.bsd-stale{font-size:12px;opacity:.75}.bsd-warning{color:#bf7c29}.bsd-stale{color:#bf7c29;margin-bottom:12px}
+.bsd-message{margin:5px 0}.bsd-progress,.bsd-warning{font-size:12px;opacity:.75}.bsd-warning{color:#bf7c29}
 .bsd-path{display:flex;align-items:center;gap:14px;overflow-x:auto;padding:12px 4px;text-align:center}
 .bsd-path a{display:flex;flex-direction:column;align-items:center;flex:0 0 94px;max-width:110px;color:var(--bsd-fg);text-decoration:none;animation:bsd-appear .25s ease-out}
 .bsd-path img{width:56px;height:56px;border-radius:12px;object-fit:cover}.bsd-path strong,.bsd-path small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bsd-path small{font-size:11px;opacity:.7}
@@ -1602,15 +1553,13 @@
 .bsd-footer button{border-radius:18px;border:1px solid var(--bsd-line);padding:6px 22px;background:var(--bsd-soft)}
 .bsd-footer [data-action="explore"]{background:#f091a8;border-color:#f091a8;color:white}.bsd-footer [hidden]{display:none}
 @keyframes bsd-appear{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
-[data-theme="dark"] .bsd-overlay{--bsd-bg:#29282d;--bsd-fg:#ddd;--bsd-soft:#333138;--bsd-line:#49424c}[data-theme="dark"] .bsd-launcher{background:#333138;border-color:#62505c}
-@media(max-width:600px){.bsd-launcher{right:18px;bottom:72px}.bsd-overlay{padding:12px}.bsd-dialog{max-height:94dvh;min-height:0}.bsd-body{padding:16px}.bsd-top{grid-template-columns:1fr}.bsd-bridge{display:flex;align-items:center;justify-content:center;gap:15px}.bsd-bridge select{width:145px}.bsd-arrow{transform:rotate(90deg);font-size:26px}.bsd-header{padding:12px 16px}.bsd-header small{display:none}.bsd-footer{padding:12px 16px}.bsd-results{min-height:130px}}
-@media(prefers-reduced-motion:reduce){.bsd-launcher,.bsd-path a{transition:none;animation:none}}
+[data-theme="dark"] .bsd-overlay{--bsd-bg:#29282d;--bsd-fg:#ddd;--bsd-soft:#333138;--bsd-line:#49424c}
+@media(max-width:600px){.bsd-overlay{padding:12px}.bsd-dialog{max-height:94dvh;min-height:0}.bsd-body{padding:16px}.bsd-top{grid-template-columns:1fr}.bsd-bridge{display:flex;align-items:center;justify-content:center;gap:15px}.bsd-bridge select{width:145px}.bsd-arrow{transform:rotate(90deg);font-size:26px}.bsd-header{padding:12px 16px}.bsd-header small{display:none}.bsd-footer{padding:12px 16px}.bsd-results{min-height:130px}}
+@media(prefers-reduced-motion:reduce){.bsd-path a{animation:none}}
 `;
 
   const defaultAvatar = "https://lain.bgm.tv/pic/user/l/icon.jpg";
   const arrows = { undirected: "—", directed: "→", mutual: "↔" };
-  const logo =
-    '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 7 39 16 39 32 24 41 9 32 9 16 24 7 39 32 9 32 24 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><g fill="currentColor"><circle cx="24" cy="7" r="3"/><circle cx="39" cy="16" r="3"/><circle cx="39" cy="32" r="3"/><circle cx="24" cy="41" r="3"/><circle cx="9" cy="32" r="3"/><circle cx="9" cy="16" r="3"/></g></svg>';
   function image(element, url) {
     const src = url || defaultAvatar;
     if (element.getAttribute("src") === src) return;
@@ -1620,18 +1569,26 @@
     };
     element.src = src;
   }
-  function mountView(window, session, { self, current }) {
+  function mountView(window, session, { self, services }) {
     const { document } = window;
     const style = document.createElement("style");
     style.textContent = styles;
     document.head.append(style);
-    const launcher = document.createElement("button");
-    launcher.type = "button";
-    launcher.id = "bangumi-six-degrees-entry";
-    launcher.className = "bsd-launcher";
+    const entry = document.createElement("li");
+    entry.id = "bangumi-six-degrees-entry";
+    const badge = document.createElement("span");
+    badge.className = "service";
+    badge.style.backgroundColor = "#7756A8";
+    badge.style.color = "#fff";
+    badge.textContent = "SixDegrees";
+    const launcher = document.createElement("a");
+    launcher.href = "#";
+    launcher.className = "l bsd-entry-link";
     launcher.setAttribute("aria-label", "六度分隔");
-    launcher.title = "六度分隔";
-    launcher.innerHTML = logo;
+    launcher.setAttribute("aria-haspopup", "dialog");
+    launcher.textContent = "六度分隔";
+    entry.append(badge, document.createTextNode(" "), launcher);
+    services.append(entry);
     const overlay = document.createElement("div");
     overlay.className = "bsd-overlay";
     overlay.hidden = true;
@@ -1639,16 +1596,16 @@
     <header class="bsd-header"><div><h2 id="bsd-title">六度分隔</h2><small>你与 TA，相隔几位班友？</small></div><button type="button" class="bsd-close" aria-label="关闭六度分隔">×</button></header>
     <div class="bsd-body"><div class="bsd-top">
       ${endpoint("起点用户", 0)}
-      <div class="bsd-bridge"><select aria-label="关系模式"><option value="undirected">无向关联</option><option value="directed">单向好友</option><option value="mutual">双向好友</option></select><span class="bsd-arrow" aria-hidden="true">—</span></div>
+      <div class="bsd-bridge"><select aria-label="关系模式"><option value="mutual">双向好友</option><option value="directed">单向好友</option><option value="undirected">无向关联</option></select><span class="bsd-arrow" aria-hidden="true">↔</span></div>
       ${endpoint("终点用户", 1)}
     </div><div class="bsd-swap-row"><button type="button" class="bsd-swap" data-action="swap">⇄ 交换起点与终点</button></div>
     <div class="bsd-results"><p class="bsd-message" role="status"></p><div class="bsd-progress"></div><div class="bsd-output"></div><p class="bsd-warning"></p></div></div>
     <footer class="bsd-footer"><button type="button" data-action="stop" hidden>停止</button><button type="button" data-action="explore">探索</button></footer>
   </section>`;
     function endpoint(label, index) {
-      return `<div class="bsd-endpoint" data-endpoint="${index}"><img class="bsd-avatar" alt=""><div><label class="bsd-input"><span>@</span><input aria-label="${label}" placeholder="用户标识 / ID / 主页链接" autocomplete="off" spellcheck="false"></label><div class="bsd-shortcuts"><button type="button" data-fill="self" title="填入自己">自己</button><button type="button" data-fill="current">主页用户</button></div><small class="bsd-error" aria-live="polite"></small></div></div>`;
+      return `<div class="bsd-endpoint" data-endpoint="${index}"><a class="bsd-avatar-link" target="_blank" rel="noopener noreferrer"><img class="bsd-avatar" alt=""></a><div><strong class="bsd-endpoint-name"></strong><label class="bsd-input"><span>@</span><input aria-label="${label}" placeholder="请输入用户标识" autocomplete="off" spellcheck="false"></label><div class="bsd-shortcuts"><button type="button" data-fill="self" title="填入自己">填入自己</button><button type="button" data-action="random">随机班友</button></div><small class="bsd-error" aria-live="polite"></small></div></div>`;
     }
-    document.body.append(launcher, overlay);
+    document.body.append(overlay);
     const dialog = overlay.querySelector('[role="dialog"]');
     const select = overlay.querySelector("select");
     const explore = overlay.querySelector('[data-action="explore"]');
@@ -1669,15 +1626,12 @@
           void session.run();
         }
       });
-      for (const button of element.querySelectorAll("[data-fill]"))
-        button.addEventListener(
-          "click",
-          () =>
-            void session.fill(
-              index,
-              button.dataset.fill === "self" ? self : current,
-            ),
-        );
+      element
+        .querySelector('[data-fill="self"]')
+        .addEventListener("click", () => void session.fill(index, self));
+      element
+        .querySelector('[data-action="random"]')
+        .addEventListener("click", () => void session.random(index));
     });
     select.addEventListener("change", () => session.setMode(select.value));
     overlay
@@ -1714,14 +1668,15 @@
         first?.focus();
       }
     });
-    launcher.addEventListener("click", () => {
-      void session.open();
+    launcher.addEventListener("click", (event) => {
+      event.preventDefault();
+      session.open();
       (
         dialog.querySelector("input:not(:disabled)") ??
         dialog.querySelector("button")
       )?.focus();
     });
-    let lastResult, lastStale;
+    let lastResult;
     session.subscribe((state) => {
       overlay.hidden = !state.visible;
       dialog.hidden = !state.visible;
@@ -1732,45 +1687,55 @@
           input.value = state.inputs[index];
         input.disabled = busy;
         input.setAttribute("aria-invalid", String(!!state.errors[index]));
-        image(element.querySelector("img"), state.endpoints[index]?.avatar);
-        element.querySelector(".bsd-error").textContent = state.resolving[index]
-          ? "正在确认用户…"
-          : state.errors[index];
-        for (const button of element.querySelectorAll("[data-fill]")) {
-          const unavailable = button.dataset.fill === "self" ? !self : !current;
-          button.disabled = busy || unavailable;
-          button.title = unavailable
-            ? "无法识别登录用户"
-            : button.dataset.fill === "self"
-              ? "填入自己"
-              : "填入当前主页用户";
+        const user = state.endpoints[index];
+        const name = element.querySelector(".bsd-endpoint-name");
+        name.textContent = user?.name || user?.id || "";
+        name.title = name.textContent;
+        image(element.querySelector("img"), user?.avatar);
+        const profile = element.querySelector(".bsd-avatar-link");
+        if (user) {
+          profile.href = `/user/${encodeURIComponent(user.id)}`;
+          profile.setAttribute("aria-label", `打开 @${user.id} 的主页`);
+        } else {
+          profile.removeAttribute("href");
+          profile.removeAttribute("aria-label");
         }
+        element.querySelector(".bsd-error").textContent = state.randomizing[
+          index
+        ]
+          ? "正在抽取班友…"
+          : state.resolving[index]
+            ? "正在确认用户…"
+            : state.errors[index];
+        const selfButton = element.querySelector('[data-fill="self"]');
+        selfButton.disabled = busy || !self;
+        selfButton.title = self ? "填入自己" : "无法识别登录用户";
+        const randomButton = element.querySelector('[data-action="random"]');
+        randomButton.disabled = busy;
+        randomButton.setAttribute(
+          "aria-busy",
+          String(state.randomizing[index]),
+        );
       });
       select.value = state.mode;
       select.disabled = busy;
       overlay.querySelector(".bsd-arrow").textContent = arrows[state.mode];
       overlay.querySelector('[data-action="swap"]').disabled = busy;
-      explore.disabled = busy;
-      stop.hidden = !busy;
+      explore.disabled = busy || state.randomizing.some(Boolean);
+      stop.hidden = !busy && !state.resolving.some(Boolean);
       overlay.querySelector(".bsd-message").textContent = state.message;
       overlay.querySelector(".bsd-progress").textContent =
         state.phase === "running"
           ? `已触达 ${state.progress.visited} 位用户 · ${session.requestCount()} 次请求 · 已读取 ${state.progress.observations} 份关系列表`
           : "";
       overlay.querySelector(".bsd-warning").textContent = state.warning;
-      if (lastResult === state.result && lastStale === state.stale) return;
+      if (lastResult === state.result) return;
       lastResult = state.result;
-      lastStale = state.stale;
       const output = overlay.querySelector(".bsd-output");
       output.replaceChildren();
+      delete output.dataset.result;
       if (!state.result) return;
       output.dataset.result = state.result.status;
-      if (state.stale) {
-        const label = document.createElement("p");
-        label.className = "bsd-stale";
-        label.textContent = "上次结果（不是当前条件或本次搜索的结论）";
-        output.append(label);
-      }
       if (state.result.status !== "found") return;
       const path = document.createElement("div");
       path.className = "bsd-path";
@@ -1806,12 +1771,162 @@
     return launcher;
   }
 
+  const rangeKey = "bangumi-six-degrees:random-range";
+  // Successful numeric home locator, not a measured population or verified UID.
+  const defaultSeed = {
+    range: 1294903,
+    observed: 1294892,
+    checkedAt: Date.parse("2026-10-24T01:14:19.022Z"),
+  };
+  const day = 86400000;
+  const positive = (value) => Number.isSafeInteger(value) && value > 0;
+
+  function createRandomUsers({
+    site,
+    store,
+    storage,
+    now = Date.now,
+    random = Math.random,
+    sleep = delay,
+    seed = defaultSeed,
+  }) {
+    let record = { ...seed };
+    try {
+      const saved = JSON.parse(storage?.()?.getItem(rangeKey) ?? "null");
+      if (
+        saved &&
+        positive(saved.range) &&
+        positive(saved.observed) &&
+        saved.range >= saved.observed &&
+        Number.isSafeInteger(saved.checkedAt) &&
+        saved.checkedAt >= 0 &&
+        saved.checkedAt <= now()
+      )
+        record = {
+          range: Math.max(seed.range, saved.range),
+          observed: Math.max(seed.observed, saved.observed),
+          checkedAt: saved.checkedAt,
+        };
+    } catch {
+      // The built-in range also works without localStorage.
+    }
+    let background,
+      controller,
+      lastAttempt = -Infinity;
+
+    function refresh() {
+      if (background) return background;
+      if (now() - lastAttempt < 3600000) return Promise.resolve();
+      lastAttempt = now();
+      const abort = new AbortController();
+      controller = abort;
+      background = (async () => {
+        await Promise.resolve();
+        try {
+          let lower = record.observed;
+          let step = Math.max(
+            1,
+            Math.ceil((Math.max(0, now() - record.checkedAt) / day) * 512),
+          );
+          let upper = Math.max(record.range, lower) + step;
+          // High-ID holes are deliberately ignored: this is a heuristic bracket.
+          while (true) {
+            abort.signal.throwIfAborted();
+            if (!positive(upper)) throw new Error("抽样范围超出安全整数范围");
+            const user = await site.candidate(upper, { signal: abort.signal });
+            abort.signal.throwIfAborted();
+            if (!user) break;
+            lower = upper;
+            step *= 2;
+            upper = lower + step;
+          }
+          while (upper - lower >= 10000) {
+            const middle = lower + Math.floor((upper - lower) / 2);
+            const user = await site.candidate(middle, { signal: abort.signal });
+            abort.signal.throwIfAborted();
+            if (user) lower = middle;
+            else upper = middle;
+          }
+          abort.signal.throwIfAborted();
+          record = { range: upper - 1, observed: lower, checkedAt: now() };
+          try {
+            storage?.()?.setItem(rangeKey, JSON.stringify(record));
+          } catch {
+            // A denied write only prevents reuse on another page.
+          }
+        } catch {
+          // Temporary failures/cancellation leave the previous range untouched.
+        } finally {
+          if (controller === abort) {
+            controller = undefined;
+            background = undefined;
+          }
+        }
+      })();
+      return background;
+    }
+
+    return {
+      refresh,
+      cancel() {
+        controller?.abort();
+      },
+      async pick({ signal, exclude = () => new Set() } = {}) {
+        signal ??= new AbortController().signal;
+        signal.throwIfAborted();
+        const range = record.range;
+        void refresh();
+        while (true) {
+          signal.throwIfAborted();
+          const number = 1 + Math.floor(random() * range);
+          if (!exclude().has(String(number))) {
+            const user = await site.candidate(number, { signal });
+            signal.throwIfAborted();
+            if (user && !exclude().has(user.id)) {
+              const abort = new AbortController();
+              const candidateSignal = AbortSignal.any([signal, abort.signal]);
+              try {
+                const source = createDataSource({
+                  store,
+                  site,
+                  initialUsers: [user],
+                });
+                const records = await source.load(
+                  [
+                    [user.id, "friends"],
+                    [user.id, "rev_friends"],
+                  ],
+                  { signal: candidateSignal },
+                );
+                signal.throwIfAborted();
+                if (
+                  records.every(
+                    ({ snapshot }) => snapshot.status === "available",
+                  ) &&
+                  !exclude().has(user.id)
+                )
+                  return user;
+              } catch (error) {
+                signal.throwIfAborted();
+                if (error.status !== 404) throw error;
+              } finally {
+                abort.abort();
+              }
+            }
+          }
+          await sleep(200, signal);
+        }
+      },
+    };
+  }
+
   function selfIdentifier(window) {
     if (typeof window.CHOBITS_USERNAME === "string" && window.CHOBITS_USERNAME)
       return window.CHOBITS_USERNAME;
     const anchor = window.document.querySelector(
       '#dock a[href^="/user/"], #badgeUserPanel a.avatar[href]',
     );
+    if (!anchor) return;
     try {
       const url = new URL(
         anchor?.getAttribute("href") ?? "",
@@ -1834,7 +1949,7 @@
     if (
       location.protocol !== "https:" ||
       !["bgm.tv", "bangumi.tv", "chii.in"].includes(location.host) ||
-      !/^\/user\/[^/]+\/(friends|rev_friends)\/?$/.test(location.pathname)
+      !/^\/user\/[^/]+\/?$/.test(location.pathname)
     )
       return;
     if (!document.body) {
@@ -1846,9 +1961,13 @@
       return;
     }
     if (document.getElementById("bangumi-six-degrees-entry")) return;
+    const services = document.querySelector(
+      "#user_home .user_box ul.network_service",
+    );
+    if (!services) return;
     let current;
     try {
-      current = readUser(document, location.href).id;
+      current = readUser(document, location.href);
     } catch {
       return;
     }
@@ -1858,12 +1977,16 @@
       onRequest: (count) => session?.countRequests(count),
     });
     const site = createSite({ window, requests });
-    session = createSession({
-      site,
-      store: browserStore(window),
-      storage: () => window.localStorage,
+    const store = browserStore(window);
+    const storage = () => window.localStorage;
+    const randomUsers = createRandomUsers({ site, store, storage });
+    session = createSession({ site, store, storage, current, randomUsers });
+    mountView(window, session, { self: selfIdentifier(window), services });
+    window.addEventListener("pagehide", () => {
+      session.stop();
+      randomUsers.cancel();
     });
-    mountView(window, session, { self: selfIdentifier(window), current });
+
     return session;
   }
 

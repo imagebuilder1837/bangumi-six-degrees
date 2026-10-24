@@ -80,7 +80,7 @@ test("已识别原站错误排除无效节点，普通缺失条目不抹掉其�
   );
 });
 
-test("缓存缺失不是空列表，另一侧的完整证据仍可证明最短", async () => {
+test("缺少必要观察不是空列表，另一侧的完整证据仍可证明最短", async () => {
   const partial = {
     async load(keys) {
       return keys
@@ -175,7 +175,6 @@ test("局部重证保留有效支路，网络按后到观察而非缓存时间�
   };
   const loaded = new Set();
   const provider = {
-    kind: "network",
     async load(keys) {
       return keys.map(([id, direction]) => {
         const key = JSON.stringify([id, direction]);

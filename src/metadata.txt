@@ -2,14 +2,11 @@
 // @name         Bangumi 六度分隔
 // @namespace    https://github.com/imagebuilder1837/bangumi-six-degrees
 // @version      {{VERSION}}
-// @description  探索两位 Bangumi 用户之间的最短好友关系链，支持无向关联、单向好友与双向好友三种模式。
+// @description  探索两位 Bangumi 用户之间的最短好友关系链，支持双向好友、单向好友与无向关联三种模式。
 // @author       imagebuilder1837
-// @match        https://bgm.tv/user/*/friends
-// @match        https://bgm.tv/user/*/rev_friends
-// @match        https://bangumi.tv/user/*/friends
-// @match        https://bangumi.tv/user/*/rev_friends
-// @match        https://chii.in/user/*/friends
-// @match        https://chii.in/user/*/rev_friends
+// @match        https://bgm.tv/user/*
+// @match        https://bangumi.tv/user/*
+// @match        https://chii.in/user/*
 // @run-at       document-idle
 // @grant        none
 // @license      MIT

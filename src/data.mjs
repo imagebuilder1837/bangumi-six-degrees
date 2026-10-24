@@ -8,7 +8,6 @@ export function browserStore(window) {
   };
 }
 export function createDataSource({
-  kind,
   store,
   site,
   initialUsers = [],
@@ -23,7 +22,6 @@ export function createDataSource({
     warned = true;
   };
   return {
-    kind,
     async estimate(keys, { signal } = {}) {
       if (!keys.length) return 0;
       try {
@@ -41,18 +39,6 @@ export function createDataSource({
       }
     },
     async load(keys, { signal } = {}) {
-      if (kind === "cache") {
-        const data = await store.read(
-          { relationships: keys, users: [...new Set(keys.map(([id]) => id))] },
-          { signal },
-        );
-        for (const [id, user] of Object.entries(data.users))
-          profiles.set(id, { id, ...user });
-        return keys.flatMap(([id, direction]) => {
-          const snapshot = data.relationships[id]?.[direction];
-          return snapshot ? [{ id, direction, snapshot }] : [];
-        });
-      }
       return Promise.all(
         keys.map(([id, direction]) => {
           const key = JSON.stringify([id, direction]);
@@ -101,12 +87,7 @@ export function createDataSource({
         }),
       );
     },
-    async users(ids, { signal } = {}) {
-      if (kind === "cache") {
-        const data = await store.read({ users: ids }, { signal });
-        for (const [id, user] of Object.entries(data.users))
-          profiles.set(id, { id, ...user });
-      }
+    async users(ids) {
       return new Map(
         ids.map((id) => [id, profiles.get(id) ?? { id, name: id, avatar: "" }]),
       );

@@ -94,7 +94,7 @@ export async function search({
 }) {
   if (!["directed", "undirected", "mutual"].includes(mode))
     throw new Error("未知关系模式");
-  const graph = new ObservationGraph(source.kind === "network");
+  const graph = new ObservationGraph();
   const sides = [new SearchSide(start), new SearchSide(end)];
   const attempted = new Set();
   let observations = 0;

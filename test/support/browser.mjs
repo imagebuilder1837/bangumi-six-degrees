@@ -8,16 +8,18 @@ export function listing(id, members, profiles = {}) {
   return `${home(id, profiles[id]?.name ?? id)}<ul id="memberUserList" class="usersMedium">${members.map((other) => `<li class="user"><div class="userContainer"><strong><a class="avatar" href="/user/${other}"><span class="userImage"><span class="avatarNeue" style="background-image:url('https://lain.bgm.tv/${other}.jpg')"></span></span>${profiles[other]?.name ?? other}</a></strong></div></li>`).join("")}</ul>`;
 }
 export function browser({
-  edges = { alice: ["bob"], bob: [] },
+  edges = { alice: ["bob"], bob: ["alice"] },
   profiles = {},
   aliases = { 1: "alice" },
   indexedDB = new IDBFactory(),
   beforeFetch,
   storage,
+  current = "alice",
+  url = `https://bgm.tv/user/${current}`,
 } = {}) {
   const dom = new JSDOM(
-    `<!doctype html><html><body>${home("alice")}<div id="dock"><a href="/user/self">自己</a></div></body></html>`,
-    { url: "https://bgm.tv/user/alice/friends" },
+    `<!doctype html><html><body>${home(current, profiles[current]?.name ?? current)}<div id="user_home"><div class="user_box"><ul class="network_service clearit"></ul></div></div><div id="dock"><a href="/user/self">自己</a></div></body></html>`,
+    { url },
   );
   const { window } = dom;
   Object.defineProperty(window, "indexedDB", { value: indexedDB });
@@ -27,7 +29,8 @@ export function browser({
   const urls = [];
   const fetch = async (url, options) => {
     urls.push(url);
-    await beforeFetch?.(url, options);
+    const response = await beforeFetch?.(url, options);
+    if (response) return response;
     const [raw, direction] = new URL(url).pathname.split("/").slice(2);
     const id = aliases[decodeURIComponent(raw)] ?? decodeURIComponent(raw);
     const members =

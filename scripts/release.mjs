@@ -36,8 +36,7 @@ export async function readRelease(root) {
     .split("\n")
     .map((line) => line.trim().replace(/\s+/g, " "));
   for (const host of ["bgm.tv", "bangumi.tv", "chii.in"])
-    for (const direction of ["friends", "rev_friends"])
-      if (!lines.includes(`// @match https://${host}/user/*/${direction}`))
-        throw new Error(`Missing metadata match for ${host}/${direction}`);
+    if (!lines.includes(`// @match https://${host}/user/*`))
+      throw new Error(`Missing metadata match for ${host}/user/*`);
   return { manifest, metadata };
 }

@@ -1,7 +1,7 @@
 const hosts = new Set(["bgm.tv", "bangumi.tv", "chii.in"]);
 function identifier(value) {
   if (!value || /[\s/?#@]/u.test(value))
-    throw new Error("请输入有效的用户标识、数字 ID 或用户主页链接");
+    throw new Error("请输入有效的用户标识");
   return value;
 }
 export function normalizeInput(input) {
@@ -10,7 +10,7 @@ export function normalizeInput(input) {
     const url = new URL(text);
     const match = /^\/user\/([^/]+)\/?$/.exec(url.pathname);
     if (!hosts.has(url.host) || url.username || url.password || !match)
-      throw new Error("请输入 Bangumi 用户主页链接");
+      throw new Error("请输入有效的用户标识");
     return identifier(decodeURIComponent(match[1]));
   }
   return identifier(text.replace(/^@/, ""));
