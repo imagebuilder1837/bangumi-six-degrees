@@ -97,6 +97,12 @@ test("Enter 开始探索时聚焦停止按钮，完成后聚焦探索按钮并�
   await session.fill(1, "bob");
   const input = document.querySelector('[aria-label="终点用户"]');
   input.focus();
+  const hint = document.querySelector(".bsd-hint");
+  assert.equal(hint.textContent, "");
+  assert.equal(
+    document.querySelector('[data-action="explore"]').textContent,
+    "开始探索 ↗",
+  );
   key(env.window, input, "Enter", { isComposing: true });
   assert.equal(session.state.phase, "idle");
   assert.match(env.window.getComputedStyle(input).outline, /none/);
@@ -105,12 +111,16 @@ test("Enter 开始探索时聚焦停止按钮，完成后聚焦探索按钮并�
   const stop = document.querySelector('[data-action="stop"]');
   const explore = document.querySelector('[data-action="explore"]');
   assert.equal(document.activeElement, stop);
+  assert.equal(hint.textContent, "");
+  assert.equal(explore.textContent, "探索中…");
   assert.equal(document.querySelector(".bsd-pulse").hidden, false);
   assert.equal(document.querySelector(".bsd-progress").hidden, false);
   assert.match(env.window.getComputedStyle(stop).outline, /solid/);
   gate.resolve();
   await until(() => session.state.phase === "complete");
   assert.equal(document.activeElement, explore);
+  assert.equal(hint.textContent, "");
+  assert.equal(explore.textContent, "开始探索 ↗");
   assert.match(env.window.getComputedStyle(explore).outline, /solid/);
   assert.equal(document.querySelector(".bsd-pulse").hidden, true);
   assert.equal(document.querySelector(".bsd-progress").hidden, true);
@@ -195,7 +205,7 @@ test("用户确认和两端错误集中在左下角，输入框关联提示且�
   assert.match(hint.textContent, /^获取终点用户时出错：/);
   assert.doesNotMatch(hint.textContent, /起点用户/);
   session.setInput(1, "");
-  assert.match(hint.textContent, /Enter/);
+  assert.equal(hint.textContent, "");
 });
 
 test("端点报错使用自然语句描述起点和终点用户", async (t) => {

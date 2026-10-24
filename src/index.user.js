@@ -2064,10 +2064,7 @@
       text(overlay.querySelector(".bsd-mode-note"), modeNotes[state.mode]);
       overlay.querySelector('[data-action="swap"]').disabled = busy;
       explore.disabled = !state.canRun;
-      text(
-        explore,
-        busy ? "探索中…" : state.result ? "再探索一次 ↗" : "开始探索 ↗",
-      );
+      text(explore, busy ? "探索中…" : "开始探索 ↗");
       stop.hidden = !state.canStop;
       text(stop, randomizing ? "停止抽取" : "停止探索");
       const [label, detail] = status(state);
@@ -2108,16 +2105,7 @@
         activity === "resolving" ? [index === 0 ? "起点用户" : "终点用户"] : [],
       );
       if (resolving.length) hints.push(`正在确认${resolving.join("和")}…`);
-      text(
-        overlay.querySelector(".bsd-hint"),
-        hints.length
-          ? hints.join("；")
-          : busy
-            ? "关闭弹窗后，探索继续。"
-            : state.result?.status === "found"
-              ? "点击头像，打开班友主页。"
-              : "输入框内按 Enter 开始探索",
-      );
+      text(overlay.querySelector(".bsd-hint"), hints.join("；"));
       if (lastResult !== state.result) {
         renderResult(state.result);
         lastResult = state.result;
