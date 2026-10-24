@@ -345,9 +345,13 @@
   function readRelationships(window, html, owner, base, name) {
     const document = new window.DOMParser().parseFromString(html, "text/html");
     if (name === "[已注销]" && unavailable(document))
-      return { status: "unavailable", members: [], pages: [] };
+      return { status: "unavailable", members: [] };
     if (identity(document, base) !== owner)
       throw new Error("关系页面身份不匹配");
+    if (
+      document.querySelector(".page_inner, .multipage, .pagination, .paginator")
+    )
+      throw new Error("不支持关系列表分页");
     const list = document.querySelector("#memberUserList.usersMedium");
     if (
       !list ||
@@ -396,36 +400,11 @@
         avatar: image,
       });
     }
-    const current = new URL(base);
-    const pages = new Set();
-    for (const link of document.querySelectorAll(
-      ".page_inner a[href], .multipage a[href], .pagination a[href]",
-    )) {
-      const url = new URL(link.getAttribute("href"), base);
-      if (
-        url.origin !== current.origin ||
-        url.pathname !== current.pathname ||
-        !/^\d+$/.test(url.searchParams.get("page") ?? "")
-      )
-        throw new Error("无法确认关系列表分页完整性");
-      const page = Number(url.searchParams.get("page"));
-      if (
-        !Number.isSafeInteger(page) ||
-        page < 1 ||
-        [...url.searchParams.keys()].some((key) => key !== "page")
-      )
-        throw new Error("无法确认关系列表分页完整性");
-      if (page === 1) url.searchParams.delete("page");
-      else url.searchParams.set("page", String(page));
-      url.hash = "";
-      pages.add(url.href);
-    }
     return {
       status: "available",
       owner: readUser(document, base),
       members: [...members.values()],
       missingIdentifiers,
-      pages: [...pages],
     };
   }
   function createSite({
@@ -475,53 +454,39 @@
       resolve: (input, options) => home(input, options),
       candidate: (number, options) => home(String(number), options, true),
       async relationships(id, direction, { signal, name } = {}) {
-        const pending = [
-          `${origin}/user/${encodeURIComponent(id)}/${direction}`,
-        ];
-        const queued = new Set(pending),
-          members = new Map();
-        let missing = 0,
-          owner;
-        for (let index = 0; index < pending.length; index++) {
-          const url = pending[index];
-          const page = readRelationships(
-            window,
-            await requests.text(url, { signal }),
-            id,
-            url,
-            name,
-          );
-          if (page.status === "unavailable") {
-            if (index) throw new Error("关系列表分页不可访问");
-            return {
-              snapshot: {
-                status: "unavailable",
-                fetchedAt: now(),
-                issue: { code: "deleted-display-name-page-unavailable" },
-              },
-              users: [],
-            };
-          }
-          owner = page.owner;
-          for (const user of page.members) members.set(user.id, user);
-          missing += page.missingIdentifiers;
-          for (const pageUrl of page.pages)
-            if (!queued.has(pageUrl)) {
-              queued.add(pageUrl);
-              pending.push(pageUrl);
-            }
-        }
+        const url = `${origin}/user/${encodeURIComponent(id)}/${direction}`;
+        const page = readRelationships(
+          window,
+          await requests.text(url, { signal }),
+          id,
+          url,
+          name,
+        );
+        if (page.status === "unavailable")
+          return {
+            snapshot: {
+              status: "unavailable",
+              fetchedAt: now(),
+              issue: { code: "deleted-display-name-page-unavailable" },
+            },
+            users: [],
+          };
         const fetchedAt = now();
         return {
           snapshot: {
             status: "available",
-            members: [...members.keys()],
+            members: page.members.map(({ id }) => id),
             fetchedAt,
-            ...(missing
-              ? { issue: { code: "missing-identifiers", count: missing } }
+            ...(page.missingIdentifiers
+              ? {
+                  issue: {
+                    code: "missing-identifiers",
+                    count: page.missingIdentifiers,
+                  },
+                }
               : {}),
           },
-          users: [...members.values(), owner].map((user) => ({
+          users: [...page.members, page.owner].map((user) => ({
             ...user,
             fetchedAt,
           })),
@@ -1880,18 +1845,39 @@
       },
       true,
     );
+    let inputEnterHeld = false;
+    document.addEventListener("keyup", (event) => {
+      if (event.key === "Enter") inputEnterHeld = false;
+    });
+    window.addEventListener("blur", () => {
+      inputEnterHeld = false;
+    });
     document.addEventListener(
       "keydown",
       (event) => {
-        if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey)
+        if (event.isComposing) return;
+        if (event.key === "Escape" && session.state.visible) {
+          event.preventDefault();
+          inputMode("keyboard");
+          close();
           return;
+        }
+        // Holding Enter must not activate another control after the input blurs.
+        if (event.key === "Enter" && event.repeat && inputEnterHeld) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
         if (event.key === "Tab") {
           inputMode("keyboard");
           return;
         }
         if (!inComponent(event.target)) return;
         if (
-          ["Enter", "Escape"].includes(event.key) ||
+          event.key === "Escape" ||
+          (event.key === "Enter" &&
+            !event.target.closest("input,textarea,[contenteditable]")) ||
           (!event.target.closest("input,textarea,[contenteditable]") &&
             [
               " ",
@@ -1919,7 +1905,9 @@
       input.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && !event.isComposing) {
           event.preventDefault();
-          void session.run();
+          if (event.repeat) return;
+          inputEnterHeld = true;
+          input.blur();
         }
       });
       element
@@ -1944,10 +1932,6 @@
       if (event.target === overlay) close();
     });
     overlay.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        close();
-      }
       if (event.key !== "Tab") return;
       const focusable = [
         ...dialog.querySelectorAll(

@@ -115,18 +115,39 @@ export function mountView(window, session, { self, services }) {
     },
     true,
   );
+  let inputEnterHeld = false;
+  document.addEventListener("keyup", (event) => {
+    if (event.key === "Enter") inputEnterHeld = false;
+  });
+  window.addEventListener("blur", () => {
+    inputEnterHeld = false;
+  });
   document.addEventListener(
     "keydown",
     (event) => {
-      if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey)
+      if (event.isComposing) return;
+      if (event.key === "Escape" && session.state.visible) {
+        event.preventDefault();
+        inputMode("keyboard");
+        close();
         return;
+      }
+      // Holding Enter must not activate another control after the input blurs.
+      if (event.key === "Enter" && event.repeat && inputEnterHeld) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "Tab") {
         inputMode("keyboard");
         return;
       }
       if (!inComponent(event.target)) return;
       if (
-        ["Enter", "Escape"].includes(event.key) ||
+        event.key === "Escape" ||
+        (event.key === "Enter" &&
+          !event.target.closest("input,textarea,[contenteditable]")) ||
         (!event.target.closest("input,textarea,[contenteditable]") &&
           [
             " ",
@@ -152,7 +173,9 @@ export function mountView(window, session, { self, services }) {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.isComposing) {
         event.preventDefault();
-        void session.run();
+        if (event.repeat) return;
+        inputEnterHeld = true;
+        input.blur();
       }
     });
     element
@@ -177,10 +200,6 @@ export function mountView(window, session, { self, services }) {
     if (event.target === overlay) close();
   });
   overlay.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close();
-    }
     if (event.key !== "Tab") return;
     const focusable = [
       ...dialog.querySelectorAll(

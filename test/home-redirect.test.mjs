@@ -130,7 +130,7 @@ test("跳转主页身份、好友链接或结构不可信时终止而非冒充�
   }
 });
 
-test("主页跳转例外不放宽两向关系列表及后续分页", async (t) => {
+test("主页跳转例外不放宽两向关系列表", async (t) => {
   for (const direction of ["friends", "rev_friends"]) {
     const { site, calls } = setup(t, async () =>
       response(listing("other", []), `https://bgm.tv/user/other/${direction}`),
@@ -141,17 +141,6 @@ test("主页跳转例外不放宽两向关系列表及后续分页", async (t) =
     );
     assert.equal(calls.length, 1);
   }
-  const { site, calls } = setup(t, async (url) =>
-    url.includes("?page=2")
-      ? response(listing("yu_nagi", []), "https://bgm.tv/user/yu_nagi/friends")
-      : response(
-          listing("yu_nagi", []) +
-            '<div class="page_inner"><a href="?page=2">2</a></div>',
-          url,
-        ),
-  );
-  await assert.rejects(site.relationships("yu_nagi", "friends"), /非预期页面/);
-  assert.equal(calls.length, 2);
 });
 
 test("被拒绝目标上的 429 和 503 不重试也不改变全局限流", async (t) => {

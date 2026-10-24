@@ -70,26 +70,67 @@ test("两类已知原站错误与普通结构损坏严格区分", async () => {
   );
 });
 
-test("分页完整获取后再返回关系，第一页别名不重复抓取", async () => {
+test("两向关系列表各读取单次响应，保留去重后的成员和资料", async () => {
   const urls = [];
   const requests = createRequests({
     fetch: async (url) => {
       urls.push(url);
-      const members =
-        new URL(url).searchParams.get("page") === "2" ? ["carol"] : ["bob"];
-      return new Response(
-        listing("alice", members) +
-          '<div class="page_inner"><a href="?page=1">1</a><a href="?page=2">2</a></div>',
-      );
+      return new Response(listing("alice", ["bob", "carol", "bob"]));
     },
   });
-  const site = createSite({ window, requests, origin: "https://bgm.tv" });
-  const result = await site.relationships("alice", "friends");
-  assert.deepEqual(result.snapshot.members, ["bob", "carol"]);
-  assert.equal(urls.length, 2);
+  const site = createSite({
+    window,
+    requests,
+    origin: "https://bgm.tv",
+    now: () => 123,
+  });
+  for (const direction of ["friends", "rev_friends"]) {
+    const result = await site.relationships("alice", direction);
+    assert.deepEqual(result.snapshot, {
+      status: "available",
+      members: ["bob", "carol"],
+      fetchedAt: 123,
+    });
+    assert.deepEqual(
+      result.users.map(({ id }) => id),
+      ["bob", "carol", "alice"],
+    );
+  }
+  assert.deepEqual(urls, [
+    "https://bgm.tv/user/alice/friends",
+    "https://bgm.tv/user/alice/rev_friends",
+  ]);
 });
 
-test("不接受其他网站链接和无法解释的列表分页", () => {
+test("发现分页控件则失败，不解析页码或请求后续页面", async () => {
+  for (const direction of ["friends", "rev_friends"]) {
+    for (const className of [
+      "page_inner",
+      "multipage",
+      "pagination",
+      "paginator",
+    ]) {
+      const urls = [];
+      const requests = createRequests({
+        fetch: async (url) => {
+          urls.push(url);
+          return new Response(
+            listing("alice", ["bob"]) +
+              `<div class="${className}"><a href="?page=2">2</a></div>`,
+          );
+        },
+      });
+      const site = createSite({ window, requests, origin: "https://bgm.tv" });
+      await assert.rejects(
+        site.relationships("alice", direction),
+        /不支持关系列表分页/,
+      );
+      assert.deepEqual(urls, [`https://bgm.tv/user/alice/${direction}`]);
+    }
+  }
+});
+
+test("不接受其他网站链接和无效用户标识", () => {
   for (const input of [
     "bad/name",
     "https://",
@@ -98,15 +139,6 @@ test("不接受其他网站链接和无法解释的列表分页", () => {
     "https://bgm.tv/user/%ZZ",
   ])
     assert.throws(() => normalizeInput(input), { code: "invalid-input" });
-  assert.throws(() =>
-    readRelationships(
-      window,
-      listing("alice", []) +
-        '<div class="page_inner"><a href="/login">2</a></div>',
-      "alice",
-      "https://bgm.tv/user/alice/friends",
-    ),
-  );
 });
 const window = new JSDOM("").window;
 const fixture = (name) =>

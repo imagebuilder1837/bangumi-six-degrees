@@ -102,8 +102,12 @@ function unavailable(document) {
 export function readRelationships(window, html, owner, base, name) {
   const document = new window.DOMParser().parseFromString(html, "text/html");
   if (name === "[已注销]" && unavailable(document))
-    return { status: "unavailable", members: [], pages: [] };
+    return { status: "unavailable", members: [] };
   if (identity(document, base) !== owner) throw new Error("关系页面身份不匹配");
+  if (
+    document.querySelector(".page_inner, .multipage, .pagination, .paginator")
+  )
+    throw new Error("不支持关系列表分页");
   const list = document.querySelector("#memberUserList.usersMedium");
   if (
     !list ||
@@ -147,36 +151,11 @@ export function readRelationships(window, html, owner, base, name) {
       avatar: image,
     });
   }
-  const current = new URL(base);
-  const pages = new Set();
-  for (const link of document.querySelectorAll(
-    ".page_inner a[href], .multipage a[href], .pagination a[href]",
-  )) {
-    const url = new URL(link.getAttribute("href"), base);
-    if (
-      url.origin !== current.origin ||
-      url.pathname !== current.pathname ||
-      !/^\d+$/.test(url.searchParams.get("page") ?? "")
-    )
-      throw new Error("无法确认关系列表分页完整性");
-    const page = Number(url.searchParams.get("page"));
-    if (
-      !Number.isSafeInteger(page) ||
-      page < 1 ||
-      [...url.searchParams.keys()].some((key) => key !== "page")
-    )
-      throw new Error("无法确认关系列表分页完整性");
-    if (page === 1) url.searchParams.delete("page");
-    else url.searchParams.set("page", String(page));
-    url.hash = "";
-    pages.add(url.href);
-  }
   return {
     status: "available",
     owner: readUser(document, base),
     members: [...members.values()],
     missingIdentifiers,
-    pages: [...pages],
   };
 }
 export function createSite({
@@ -226,51 +205,39 @@ export function createSite({
     resolve: (input, options) => home(input, options),
     candidate: (number, options) => home(String(number), options, true),
     async relationships(id, direction, { signal, name } = {}) {
-      const pending = [`${origin}/user/${encodeURIComponent(id)}/${direction}`];
-      const queued = new Set(pending),
-        members = new Map();
-      let missing = 0,
-        owner;
-      for (let index = 0; index < pending.length; index++) {
-        const url = pending[index];
-        const page = readRelationships(
-          window,
-          await requests.text(url, { signal }),
-          id,
-          url,
-          name,
-        );
-        if (page.status === "unavailable") {
-          if (index) throw new Error("关系列表分页不可访问");
-          return {
-            snapshot: {
-              status: "unavailable",
-              fetchedAt: now(),
-              issue: { code: "deleted-display-name-page-unavailable" },
-            },
-            users: [],
-          };
-        }
-        owner = page.owner;
-        for (const user of page.members) members.set(user.id, user);
-        missing += page.missingIdentifiers;
-        for (const pageUrl of page.pages)
-          if (!queued.has(pageUrl)) {
-            queued.add(pageUrl);
-            pending.push(pageUrl);
-          }
-      }
+      const url = `${origin}/user/${encodeURIComponent(id)}/${direction}`;
+      const page = readRelationships(
+        window,
+        await requests.text(url, { signal }),
+        id,
+        url,
+        name,
+      );
+      if (page.status === "unavailable")
+        return {
+          snapshot: {
+            status: "unavailable",
+            fetchedAt: now(),
+            issue: { code: "deleted-display-name-page-unavailable" },
+          },
+          users: [],
+        };
       const fetchedAt = now();
       return {
         snapshot: {
           status: "available",
-          members: [...members.keys()],
+          members: page.members.map(({ id }) => id),
           fetchedAt,
-          ...(missing
-            ? { issue: { code: "missing-identifiers", count: missing } }
+          ...(page.missingIdentifiers
+            ? {
+                issue: {
+                  code: "missing-identifiers",
+                  count: page.missingIdentifiers,
+                },
+              }
             : {}),
         },
-        users: [...members.values(), owner].map((user) => ({
+        users: [...page.members, page.owner].map((user) => ({
           ...user,
           fetchedAt,
         })),

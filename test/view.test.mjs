@@ -6,14 +6,14 @@ import { browser, until } from "./support/browser.mjs";
 import { deferred } from "./support/async.mjs";
 
 function key(window, element, value, options = {}) {
-  element.dispatchEvent(
-    new window.KeyboardEvent("keydown", {
-      key: value,
-      bubbles: true,
-      cancelable: true,
-      ...options,
-    }),
-  );
+  const event = new window.KeyboardEvent("keydown", {
+    key: value,
+    bubbles: true,
+    cancelable: true,
+    ...options,
+  });
+  element.dispatchEvent(event);
+  return event;
 }
 function pointer(window, element) {
   element.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
@@ -80,7 +80,174 @@ test("两端输入框获得焦点时全选，编辑期间保留光标位置", as
   }
 });
 
-test("Enter 开始探索时聚焦停止按钮，完成后聚焦探索按钮并保留键盘外框", async (t) => {
+test("两端 Enter（含修饰键）仅失焦确认身份，不启动探索或切换焦点外框", async (t) => {
+  for (const index of [0, 1]) {
+    for (const keyboard of [false, true]) {
+      for (const options of [
+        {},
+        { shiftKey: true },
+        { ctrlKey: true },
+        { altKey: true },
+        { metaKey: true },
+      ]) {
+        await t.test(
+          `${index}/${keyboard}/${JSON.stringify(options)}`,
+          async (t) => {
+            const gate = deferred();
+            const env = browser({
+              beforeFetch: async (url) => {
+                if (url.endsWith("/user/bob")) await gate.promise;
+              },
+            });
+            t.after(() => {
+              gate.resolve();
+              env.window.close();
+            });
+            const session = initialize(env.window, { fetch: env.fetch });
+            const { document } = env.window;
+            document.querySelector(".bsd-entry-link").click();
+            const input = document.querySelectorAll(".bsd-input input")[index];
+            pointer(env.window, input);
+            if (keyboard) key(env.window, input, "Tab");
+            input.value = "https://bgm.tv/user/bob";
+            input.dispatchEvent(
+              new env.window.Event("input", { bubbles: true }),
+            );
+            const enter = key(env.window, input, "Enter", options);
+            assert.equal(enter.defaultPrevented, true);
+            assert.equal(document.activeElement, document.body);
+            assert.equal(input.value, "https://bgm.tv/user/bob");
+            assert.equal(session.state.endpoints[index].activity, "resolving");
+            assert.equal(session.state.phase, "idle");
+            // Inspect actual focused controls, not just the stored input modality.
+            assert.equal(document.querySelector(".bsd-overlay :focus"), null);
+            const explore = document.querySelector('[data-action="explore"]');
+            explore.focus();
+            assert.match(
+              env.window.getComputedStyle(explore).outline,
+              keyboard ? /solid/ : /none/,
+            );
+            explore.blur();
+            gate.resolve();
+            await until(
+              () => session.state.endpoints[index].activity === "idle",
+            );
+            assert.equal(input.value, "bob");
+            assert.equal(session.state.endpoints[index].user.id, "bob");
+            assert.equal(document.activeElement, document.body);
+            assert.equal(session.state.phase, "idle");
+            assert.equal(
+              env.urls.some((url) => /\/(friends|rev_friends)/.test(url)),
+              false,
+            );
+            assert.equal(document.querySelector(".bsd-pulse").hidden, true);
+          },
+        );
+      }
+    }
+  }
+});
+
+test("Enter 保留空输入、身份错误和已确认用户的普通失焦行为", async (t) => {
+  const env = browser();
+  t.after(() => env.window.close());
+  const session = initialize(env.window, { fetch: env.fetch });
+  const { document } = env.window;
+  document.querySelector(".bsd-entry-link").click();
+  const input = document.querySelector('[aria-label="终点用户"]');
+  for (const value of ["", "bad/name", "bob", "bob"]) {
+    pointer(env.window, input);
+    if (input.value !== value) {
+      input.value = value;
+      input.dispatchEvent(new env.window.Event("input", { bubbles: true }));
+    }
+    const requests = env.urls.length;
+    const confirmed = !!session.state.endpoints[1].user;
+    key(env.window, input, "Enter");
+    await until(() => session.state.endpoints[1].activity === "idle");
+    assert.equal(document.activeElement, document.body);
+    assert.equal(session.state.phase, "idle");
+    assert.equal(input.value, value);
+    assert.equal(
+      input.getAttribute("aria-invalid"),
+      String(value === "bad/name"),
+    );
+    if (value !== "bob" || confirmed) assert.equal(env.urls.length, requests);
+  }
+  assert.equal(env.urls.filter((url) => url.endsWith("/user/bob")).length, 1);
+});
+
+test("输入法 Enter 不失焦；结束输入后的长按不会激活其他控件，松开后恢复键盘操作", async (t) => {
+  const env = browser();
+  t.after(() => env.window.close());
+  const session = initialize(env.window, { fetch: env.fetch });
+  const { document } = env.window;
+  document.querySelector(".bsd-entry-link").click();
+  await session.fill(1, "bob");
+  const input = document.querySelector('[aria-label="终点用户"]');
+  pointer(env.window, input);
+  input.dispatchEvent(
+    new env.window.CompositionEvent("compositionstart", { bubbles: true }),
+  );
+  const composing = key(env.window, input, "Enter", { isComposing: true });
+  assert.equal(composing.defaultPrevented, false);
+  assert.equal(document.activeElement, input);
+  assert.match(env.window.getComputedStyle(input).outline, /none/);
+  input.dispatchEvent(
+    new env.window.CompositionEvent("compositionend", { bubbles: true }),
+  );
+  key(env.window, input, "Enter", { repeat: true });
+  assert.equal(document.activeElement, input);
+  key(env.window, input, "Enter");
+  assert.equal(document.activeElement, document.body);
+  const explore = document.querySelector('[data-action="explore"]');
+  const repeated = key(env.window, document.body, "Enter", { repeat: true });
+  assert.equal(repeated.defaultPrevented, true);
+  explore.focus();
+  assert.equal(
+    key(env.window, explore, "Enter", { repeat: true }).defaultPrevented,
+    true,
+  );
+  assert.match(env.window.getComputedStyle(explore).outline, /none/);
+  assert.equal(session.state.phase, "idle");
+  document.dispatchEvent(
+    new env.window.KeyboardEvent("keyup", { key: "Enter", bubbles: true }),
+  );
+  assert.equal(key(env.window, explore, "Enter").defaultPrevented, false);
+  assert.match(env.window.getComputedStyle(explore).outline, /solid/);
+  // jsdom does not synthesize native button activation from keyboard events.
+  explore.click();
+  await until(() => session.state.phase === "complete");
+});
+
+test("两端 Enter 失焦后 Escape 仍关闭弹窗，隐藏时不拦截原站 Escape", (t) => {
+  const env = browser();
+  t.after(() => env.window.close());
+  const session = initialize(env.window, { fetch: env.fetch });
+  const { document } = env.window;
+  const launcher = document.querySelector(".bsd-entry-link");
+  for (const input of document.querySelectorAll(".bsd-input input")) {
+    launcher.click();
+    pointer(env.window, input);
+    key(env.window, input, "Enter");
+    assert.equal(document.activeElement, document.body);
+    assert.equal(session.state.visible, true);
+    assert.equal(
+      key(env.window, document.body, "Escape").defaultPrevented,
+      true,
+    );
+    assert.equal(session.state.visible, false);
+    assert.equal(document.activeElement, launcher);
+    assert.match(env.window.getComputedStyle(launcher).outline, /solid/);
+  }
+  const host = document.createElement("button");
+  document.body.append(host);
+  host.focus();
+  assert.equal(key(env.window, host, "Escape").defaultPrevented, false);
+  assert.equal(document.activeElement, host);
+});
+
+test("显式开始探索时聚焦停止按钮，完成后聚焦探索按钮并保留键盘外框", async (t) => {
   const gate = deferred();
   const env = browser({
     beforeFetch: async (url) => {
@@ -103,13 +270,12 @@ test("Enter 开始探索时聚焦停止按钮，完成后聚焦探索按钮并�
     document.querySelector('[data-action="explore"]').textContent,
     "开始探索 ↗",
   );
-  key(env.window, input, "Enter", { isComposing: true });
-  assert.equal(session.state.phase, "idle");
-  assert.match(env.window.getComputedStyle(input).outline, /none/);
-  key(env.window, input, "Enter");
+  const explore = document.querySelector('[data-action="explore"]');
+  explore.focus();
+  key(env.window, explore, "Enter");
+  explore.click();
   await until(() => session.state.phase === "running");
   const stop = document.querySelector('[data-action="stop"]');
-  const explore = document.querySelector('[data-action="explore"]');
   assert.equal(document.activeElement, stop);
   assert.equal(hint.textContent, "");
   assert.equal(explore.textContent, "探索中…");
