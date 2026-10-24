@@ -144,6 +144,7 @@ export function mountView(window, session, { self, services }) {
   );
   endpoints.forEach((element, index) => {
     const input = element.querySelector("input");
+    input.addEventListener("focus", () => input.select());
     input.addEventListener("input", () => session.setInput(index, input.value));
     input.addEventListener("blur", () => {
       if (session.state.canEdit) void session.resolve(index);

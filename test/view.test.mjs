@@ -55,6 +55,31 @@ test("鼠标点击输入框隐藏外框，键盘导航显示，输入和异步�
   env.window.close();
 });
 
+test("两端输入框获得焦点时全选，编辑期间保留光标位置", async (t) => {
+  const env = browser();
+  t.after(() => env.window.close());
+  const session = initialize(env.window, { fetch: env.fetch });
+  const { document } = env.window;
+  document.querySelector(".bsd-entry-link").click();
+  await session.fill(1, "bob");
+  const inputs = [...document.querySelectorAll(".bsd-input input")];
+  for (const input of inputs) {
+    document.querySelector(".bsd-close").focus();
+    pointer(env.window, input);
+    assert.equal(input.selectionStart, 0);
+    assert.equal(input.selectionEnd, input.value.length);
+    input.setSelectionRange(1, 1);
+    input.dispatchEvent(new env.window.Event("input", { bubbles: true }));
+    assert.equal(input.selectionStart, 1);
+    assert.equal(input.selectionEnd, 1);
+    document.querySelector(".bsd-close").focus();
+    key(env.window, document.activeElement, "Tab");
+    input.focus();
+    assert.equal(input.selectionStart, 0);
+    assert.equal(input.selectionEnd, input.value.length);
+  }
+});
+
 test("Enter 开始探索时聚焦停止按钮，完成后聚焦探索按钮并保留键盘外框", async (t) => {
   const gate = deferred();
   const env = browser({
