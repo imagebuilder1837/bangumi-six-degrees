@@ -7,7 +7,7 @@
 // @match        https://bgm.tv/user/*
 // @match        https://bangumi.tv/user/*
 // @match        https://chii.in/user/*
-// @run-at       document-idle
+// @run-at       document-end
 // @grant        none
 // @license      MIT
 // @downloadURL  https://raw.githubusercontent.com/imagebuilder1837/bangumi-six-degrees/refs/heads/main/src/index.user.js
