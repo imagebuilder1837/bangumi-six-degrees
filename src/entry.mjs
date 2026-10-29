@@ -1,5 +1,5 @@
 import { createRequests } from "./requests.mjs";
-import { createSite, readUser } from "./site.mjs";
+import { createSite, readCurrentUser } from "./site.mjs";
 import { browserStore } from "./data.mjs";
 import { createSession } from "./session.mjs";
 import { mountView } from "./view.mjs";
@@ -52,7 +52,7 @@ export function initialize(
   if (!services) return;
   let current;
   try {
-    current = readUser(document, location.href);
+    current = readCurrentUser(document, location);
   } catch {
     return;
   }

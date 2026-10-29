@@ -307,6 +307,26 @@
       ),
     };
   }
+  function readCurrentUser(document, location) {
+    const match = /^\/user\/([^/]+)\/?$/.exec(location.pathname);
+    if (!match)
+      throw new OperationError("profile-identity", "无法识别主页用户");
+    const id = identifier$1(decodeURIComponent(match[1]));
+    const name = document
+      .querySelector("#headerProfile .name")
+      ?.cloneNode(true);
+    name
+      ?.querySelectorAll("small.grey, #friend_flag")
+      .forEach((node) => node.remove());
+    return {
+      id,
+      name: name?.textContent.trim() || id,
+      avatar: avatar$1(
+        document.querySelector("#headerProfile .avatarNeue"),
+        location.href,
+      ),
+    };
+  }
   function readHome(document, base) {
     const user = readUser(document, base);
     const origin = new URL(base).origin;
@@ -2542,7 +2562,7 @@
     if (!services) return;
     let current;
     try {
-      current = readUser(document, location.href);
+      current = readCurrentUser(document, location);
     } catch {
       return;
     }

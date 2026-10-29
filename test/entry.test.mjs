@@ -36,6 +36,124 @@ test("三个域的自己及其他用户主页使用 network_service 入口，列
   }
 });
 
+test("昵称去链接在初始化前后执行均不影响入口和端点资料", async (t) => {
+  for (const order of ["before", "after"]) {
+    const env = browser({ profiles: { alice: { name: "Alice@家 🖖" } } });
+    t.after(() => env.window.close());
+    const { document } = env.window;
+    const name = document.querySelector("#headerProfile .name");
+    const div = document.createElement("div");
+    div.className = "name";
+    div.innerHTML = name.innerHTML;
+    name.replaceWith(div);
+    const removeLinks = () => {
+      for (const link of document.querySelectorAll(
+        'div.name a[href*="/user/"]',
+      ))
+        link.replaceWith(document.createTextNode(link.textContent));
+    };
+    const observer = new env.window.MutationObserver(removeLinks);
+    observer.observe(document.body, { childList: true, subtree: true });
+    if (order === "before") removeLinks();
+    const session = initialize(env.window, { fetch: env.fetch });
+    if (order === "after") removeLinks();
+    await Promise.resolve();
+    observer.disconnect();
+    assert.ok(document.querySelector("#bangumi-six-degrees-entry"));
+    assert.equal(div.querySelector("a"), null);
+    document.querySelector("#bangumi-six-degrees-entry a").click();
+    assert.equal(session.state.visible, true);
+    assert.equal(session.state.endpoints[0].user.id, "alice");
+    assert.equal(
+      document.querySelector(".bsd-endpoint-name").textContent,
+      "Alice@家 🖖",
+    );
+    assert.equal(
+      document.querySelector(".bsd-avatar-link").getAttribute("href"),
+      "/user/alice",
+    );
+    assert.equal(env.urls.length, 0);
+  }
+});
+
+test("当前主页以浏览器最终路径预填身份，不依赖昵称区身份且不额外请求", (t) => {
+  for (const [path, expected] of [
+    ["sai", "sai"],
+    ["yu_nagi/", "yu_nagi"],
+    ["634419", "634419"],
+    ["%61lice?foo=1#profile", "alice"],
+  ]) {
+    const env = browser({
+      current: "other",
+      url: `https://bgm.tv/user/${path}`,
+    });
+    t.after(() => env.window.close());
+    const session = initialize(env.window, { fetch: env.fetch });
+    assert.equal(session.state.endpoints[0].input, expected);
+    assert.equal(session.state.endpoints[0].user.id, expected);
+    assert.equal(
+      env.window.document
+        .querySelector(".bsd-avatar-link")
+        .getAttribute("href"),
+      `/user/${expected}`,
+    );
+    assert.equal(env.urls.length, 0);
+  }
+});
+
+test("主页昵称排除附属标记且不改变原站内容，资料缺失时仍可打开入口", (t) => {
+  for (const [markup, expected] of [
+    [
+      '<a href="/user/alice">Alice@家 🖖</a> <small class="grey">@alice</small><span id="friend_flag">好友</span>',
+      "Alice@家 🖖",
+    ],
+    [
+      'Alice@家 🖖 <small class="grey">@alice</small><span id="friend_flag">好友</span>',
+      "Alice@家 🖖",
+    ],
+    [
+      ' <small class="grey">@alice</small><span id="friend_flag">好友</span>',
+      "alice",
+    ],
+    [null, "alice"],
+  ]) {
+    const env = browser();
+    t.after(() => env.window.close());
+    const { document } = env.window;
+    const name = document.querySelector("#headerProfile .name");
+    if (markup === null) document.querySelector("#headerProfile").remove();
+    else name.innerHTML = markup;
+    document.querySelector("#headerProfile .avatarNeue")?.remove();
+    const before = document.querySelector("#headerProfile")?.outerHTML;
+    const session = initialize(env.window, { fetch: env.fetch });
+    document.querySelector("#bangumi-six-degrees-entry a").click();
+    assert.equal(session.state.visible, true);
+    assert.equal(
+      document.querySelector(".bsd-endpoint-name").textContent,
+      expected,
+    );
+    assert.equal(
+      document.querySelector(".bsd-avatar").getAttribute("src"),
+      "https://lain.bgm.tv/pic/user/l/icon.jpg",
+    );
+    assert.equal(document.querySelector("#headerProfile")?.outerHTML, before);
+    assert.equal(env.urls.length, 0);
+  }
+});
+
+test("当前主页拒绝解码后无效的用户标识且不发起请求", (t) => {
+  for (const path of ["%ZZ", "a%2Fb", "%20", "%40alice", "a%3Fb", "a%23b"]) {
+    const env = browser({ url: `https://bgm.tv/user/${path}` });
+    t.after(() => env.window.close());
+    assert.equal(initialize(env.window, { fetch: env.fetch }), undefined);
+    assert.equal(
+      env.window.document.querySelector("#bangumi-six-degrees-entry"),
+      null,
+    );
+    assert.equal(env.urls.length, 0);
+  }
+});
+
 test("关系选项顺序及默认值一致，快捷项提供填入自己和随机班友", () => {
   const env = browser();
   initialize(env.window, { fetch: env.fetch });
