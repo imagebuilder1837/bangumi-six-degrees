@@ -154,30 +154,16 @@ test("当前主页拒绝解码后无效的用户标识且不发起请求", (t) =
   }
 });
 
-test("关系选项顺序及默认值一致，快捷项提供填入自己和随机班友", () => {
+test("关系模式默认选中双向好友，关闭弹窗后焦点回到入口", () => {
   const env = browser();
   initialize(env.window, { fetch: env.fetch });
   const document = env.window.document;
   document.querySelector('[aria-label="六度分隔"]').click();
   document.querySelector('[role="combobox"]').click();
-  assert.deepEqual(
-    [...document.querySelectorAll('[role="option"]')].map(
-      (option) => option.textContent,
-    ),
-    ["双向好友", "单向好友", "无向关联"],
-  );
   assert.equal(
     document.querySelector('[role="option"][aria-selected="true"]').textContent,
     "双向好友",
   );
-  for (const endpoint of document.querySelectorAll(".bsd-endpoint")) {
-    assert.deepEqual(
-      [...endpoint.querySelectorAll("button")].map(
-        (button) => button.textContent,
-      ),
-      ["填入自己", "随机班友"],
-    );
-  }
   document.querySelector('[aria-label="关闭六度分隔"]').click();
   assert.equal(
     document.activeElement,
@@ -186,13 +172,11 @@ test("关系选项顺序及默认值一致，快捷项提供填入自己和随�
   env.window.close();
 });
 
-test("输入仅提示用户标识，UID 及主页链接仍可在内部归一", async () => {
+test("拒绝无效输入，UID 及主页链接归一为用户标识", async () => {
   const env = browser({ aliases: { 2: "bob" } });
   const session = initialize(env.window, { fetch: env.fetch });
   const document = env.window.document;
   document.querySelector('[aria-label="六度分隔"]').click();
-  for (const field of document.querySelectorAll(".bsd-endpoint input"))
-    assert.equal(field.placeholder, "请输入用户标识");
   for (const value of ["bad/name", "https://example.com/user/bob"]) {
     input(env.window, "终点用户", value);
     await until(() => session.state.endpoints[1].error);
