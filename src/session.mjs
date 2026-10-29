@@ -181,6 +181,10 @@ export function createSession({
         onProgress: (progress) => {
           if (controller === abort && !abort.signal.aborted) {
             state.progress = progress;
+            state.message =
+              progress.stage === "relations"
+                ? "正在核实路径上的好友方向…"
+                : "正在沿好友关系寻找最短路径…";
             emit();
           }
         },
@@ -192,6 +196,7 @@ export function createSession({
         state.result = immutable({
           status: "found",
           conditions,
+          relations: result.relations,
           path: result.path.map(
             (id) => users.get(id) ?? { id, name: id, avatar: "" },
           ),
@@ -216,7 +221,7 @@ export function createSession({
       state.phase = stopped ? "stopped" : "error";
       state.message = stopped
         ? "探索已停止。"
-        : `本次探索中断：${error.message}`;
+        : `${state.progress.stage === "relations" ? "好友方向核实中断" : "本次探索中断"}：${error.message}`;
     } finally {
       if (controller === abort) {
         controller = undefined;

@@ -252,6 +252,19 @@ export function mountView(window, session, { self, services }) {
     path.className = "bsd-path";
     path.setAttribute("role", "group");
     path.setAttribute("aria-label", "已确认的最短关系路径，按起点到终点排列");
+    const relations = result.relations.map((relation, index) => {
+      const from = `@${result.path[index].id}`;
+      const to = `@${result.path[index + 1].id}`;
+      return {
+        ...relation,
+        description:
+          relation.forward && relation.reverse
+            ? `${from} 与 ${to} 互相添加为好友`
+            : relation.forward
+              ? `${from} 将 ${to} 添加为好友`
+              : `${to} 将 ${from} 添加为好友`,
+      };
+    });
     result.path.forEach((user, index) => {
       const link = document.createElement("a");
       link.href = `/user/${encodeURIComponent(user.id)}`;
@@ -279,9 +292,19 @@ export function mountView(window, session, { self, services }) {
         link.append(label);
       }
       path.append(link);
+      if (relations[index]) {
+        const description = document.createElement("span");
+        description.id = `bsd-path-relation-${index}`;
+        // Direct aria-describedby references expose hidden text without a
+        // duplicate stop in reading order or an extra grid item.
+        description.hidden = true;
+        description.textContent = relations[index].description;
+        link.setAttribute("aria-describedby", description.id);
+        path.append(description);
+      }
     });
     output.append(path);
-    pathLayout = layoutPath(window, path, result.conditions.mode);
+    pathLayout = layoutPath(window, path, relations);
     if (result.path.length > 7) {
       const egg = document.createElement("p");
       egg.className = "bsd-egg";

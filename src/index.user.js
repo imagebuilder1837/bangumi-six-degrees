@@ -1095,7 +1095,8 @@
       if (this.invalid(from) || this.invalid(to)) return false;
       const forward = this.get(from, "friends");
       const reverse = this.get(to, "rev_friends");
-      if (!forward && !reverse) return false;
+      // No complete observation is different from an observed absence.
+      if (!forward && !reverse) return null;
       const chosen = !forward
         ? reverse
         : !reverse || forward.order >= reverse.order
@@ -1239,6 +1240,37 @@
           )
           .map((direction) => [id, direction]),
       );
+    // Both expansion and direction completion enter the same observation view.
+    async function load(keys, index = -1, ids = []) {
+      const records = keys.length ? await source.load(keys, { signal }) : [];
+      signal.throwIfAborted();
+      for (const key of keys) attempted.add(JSON.stringify(key));
+      const affected = new Set();
+      for (const record of records) {
+        observations++;
+        for (const id of graph.observe(record)) affected.add(id);
+      }
+      for (const id of ids) {
+        if (graph.complete(id, mode, index === 1)) affected.add(id);
+        else sides[index].blocked.add(id);
+      }
+      sides.forEach((side, sideIndex) => {
+        const changes = new Map();
+        for (const id of affected) {
+          if (graph.complete(id, mode, sideIndex === 1))
+            side.blocked.delete(id);
+          if (
+            side.expanded.has(id) ||
+            (sideIndex === index &&
+              ids.includes(id) &&
+              graph.complete(id, mode, sideIndex === 1))
+          ) {
+            changes.set(id, graph.neighbors(id, mode, sideIndex === 1));
+          }
+        }
+        side.change(changes);
+      });
+    }
     while (true) {
       signal.throwIfAborted();
       if (graph.invalid(start) || graph.invalid(end))
@@ -1253,17 +1285,38 @@
           meeting = id;
         }
       }
-      onProgress({
+      const progress = {
         visited: new Set(sides.flatMap((side) => [...side.distances.keys()]))
           .size,
         observations,
-      });
+      };
       if (
         meeting !== undefined &&
         length <= layers[0].depth + layers[1].depth
       ) {
-        return { status: "found", path: pathThrough(sides, meeting) };
+        const path = pathThrough(sides, meeting);
+        const relations = path.slice(1).map((id, index) => ({
+          forward: graph.edge(path[index], id),
+          reverse: graph.edge(id, path[index]),
+        }));
+        const unknown = relations.findIndex(
+          ({ forward, reverse }) => forward === null || reverse === null,
+        );
+        onProgress({ ...progress, stage: "relations" });
+        if (unknown === -1) return { status: "found", path, relations };
+        const [from, to] =
+          relations[unknown].forward === null
+            ? [path[unknown], path[unknown + 1]]
+            : [path[unknown + 1], path[unknown]];
+        const key = [
+          [from, "friends"],
+          [to, "rev_friends"],
+        ].find((key) => !attempted.has(JSON.stringify(key)));
+        if (!key) return { status: "incomplete" };
+        await load([key]);
+        continue;
       }
+      onProgress({ ...progress, stage: "search" });
       if (layers.some((layer) => layer.depth === Infinity))
         return { status: "unreachable" };
       if (layers.every((layer) => !layer.ids.length))
@@ -1287,34 +1340,7 @@
       );
       signal.throwIfAborted();
       const index = costs[0] <= costs[1] ? 0 : 1;
-      const records = keys[index].length
-        ? await source.load(keys[index], { signal })
-        : [];
-      signal.throwIfAborted();
-      for (const key of keys[index]) attempted.add(JSON.stringify(key));
-      const affected = new Set();
-      for (const record of records) {
-        observations++;
-        for (const id of graph.observe(record)) affected.add(id);
-      }
-      for (const id of layers[index].ids) {
-        if (graph.complete(id, mode, index === 1)) affected.add(id);
-        else sides[index].blocked.add(id);
-      }
-      sides.forEach((side, sideIndex) => {
-        const changes = new Map();
-        for (const id of affected) {
-          if (
-            side.expanded.has(id) ||
-            (sideIndex === index &&
-              layers[index].ids.includes(id) &&
-              graph.complete(id, mode, sideIndex === 1))
-          ) {
-            changes.set(id, graph.neighbors(id, mode, sideIndex === 1));
-          }
-        }
-        side.change(changes);
-      });
+      await load(keys[index], index, layers[index].ids);
     }
   }
 
@@ -1500,6 +1526,10 @@
           onProgress: (progress) => {
             if (controller === abort && !abort.signal.aborted) {
               state.progress = progress;
+              state.message =
+                progress.stage === "relations"
+                  ? "正在核实路径上的好友方向…"
+                  : "正在沿好友关系寻找最短路径…";
               emit();
             }
           },
@@ -1513,6 +1543,7 @@
           state.result = immutable({
             status: "found",
             conditions,
+            relations: result.relations,
             path: result.path.map(
               (id) => users.get(id) ?? { id, name: id, avatar: "" },
             ),
@@ -1537,7 +1568,7 @@
         state.phase = stopped ? "stopped" : "error";
         state.message = stopped
           ? "探索已停止。"
-          : `本次探索中断：${error.message}`;
+          : `${state.progress.stage === "relations" ? "好友方向核实中断" : "本次探索中断"}：${error.message}`;
       } finally {
         if (controller === abort) {
           controller = undefined;
@@ -1720,7 +1751,7 @@
 .bsd-path { position: relative; display: grid; align-items: start; gap: 40px 16px; width: 100%; margin: 6px auto 0; padding: 20px 16px 12px; }
 .bsd-path a { position: relative; display: flex; flex-direction: column; align-items: center; justify-self: center; width: 100%; max-width: 78px; min-width: 0; color: var(--bsd-fg); text-decoration: none; animation: bsd-appear .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
 .bsd-path-lines { position: absolute; inset: 0; pointer-events: none; color: var(--bsd-pink); overflow: visible; }
-.bsd-path-connection { animation: bsd-connect .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
+.bsd-path-connection { pointer-events: stroke; animation: bsd-connect .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
 .bsd-path-endpoint { margin-top: 5px; color: var(--bsd-pink); font-size: 10px; }
 .bsd-path img { display: block; width: 52px; height: 52px; border-radius: 18px; object-fit: cover; transition: transform .2s; }
 .bsd-path a:hover img { transform: translateY(-4px) rotate(-3deg); }
@@ -1891,7 +1922,7 @@
   const svgNS = "http://www.w3.org/2000/svg";
 
   // Layout only: the DOM and tab order remain the original start-to-end sequence.
-  function layoutPath(window, path, mode) {
+  function layoutPath(window, path, relations) {
     const nodes = [...path.querySelectorAll("a")];
     const svg = window.document.createElementNS(svgNS, "svg");
     svg.classList.add("bsd-path-lines");
@@ -1907,9 +1938,14 @@
       line.setAttribute("fill", "none");
       line.setAttribute("stroke", "currentColor");
       line.setAttribute("stroke-width", "1.5");
-      if (mode !== "undirected")
+      if (relations[index].description) {
+        const title = window.document.createElementNS(svgNS, "title");
+        title.textContent = relations[index].description;
+        line.append(title);
+      }
+      if (relations[index].forward)
         line.setAttribute("marker-end", `url(#${markerId})`);
-      if (mode === "mutual")
+      if (relations[index].reverse)
         line.setAttribute("marker-start", `url(#${markerId})`);
       svg.append(line);
       return line;
@@ -2229,6 +2265,19 @@
       path.className = "bsd-path";
       path.setAttribute("role", "group");
       path.setAttribute("aria-label", "已确认的最短关系路径，按起点到终点排列");
+      const relations = result.relations.map((relation, index) => {
+        const from = `@${result.path[index].id}`;
+        const to = `@${result.path[index + 1].id}`;
+        return {
+          ...relation,
+          description:
+            relation.forward && relation.reverse
+              ? `${from} 与 ${to} 互相添加为好友`
+              : relation.forward
+                ? `${from} 将 ${to} 添加为好友`
+                : `${to} 将 ${from} 添加为好友`,
+        };
+      });
       result.path.forEach((user, index) => {
         const link = document.createElement("a");
         link.href = `/user/${encodeURIComponent(user.id)}`;
@@ -2256,9 +2305,19 @@
           link.append(label);
         }
         path.append(link);
+        if (relations[index]) {
+          const description = document.createElement("span");
+          description.id = `bsd-path-relation-${index}`;
+          // Direct aria-describedby references expose hidden text without a
+          // duplicate stop in reading order or an extra grid item.
+          description.hidden = true;
+          description.textContent = relations[index].description;
+          link.setAttribute("aria-describedby", description.id);
+          path.append(description);
+        }
       });
       output.append(path);
-      pathLayout = layoutPath(window, path, result.conditions.mode);
+      pathLayout = layoutPath(window, path, relations);
       if (result.path.length > 7) {
         const egg = document.createElement("p");
         egg.className = "bsd-egg";

@@ -62,7 +62,8 @@ export class ObservationGraph {
     if (this.invalid(from) || this.invalid(to)) return false;
     const forward = this.get(from, "friends");
     const reverse = this.get(to, "rev_friends");
-    if (!forward && !reverse) return false;
+    // No complete observation is different from an observed absence.
+    if (!forward && !reverse) return null;
     const chosen = !forward
       ? reverse
       : !reverse || forward.order >= reverse.order

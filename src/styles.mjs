@@ -73,7 +73,7 @@ export const styles = `
 .bsd-path { position: relative; display: grid; align-items: start; gap: 40px 16px; width: 100%; margin: 6px auto 0; padding: 20px 16px 12px; }
 .bsd-path a { position: relative; display: flex; flex-direction: column; align-items: center; justify-self: center; width: 100%; max-width: 78px; min-width: 0; color: var(--bsd-fg); text-decoration: none; animation: bsd-appear .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
 .bsd-path-lines { position: absolute; inset: 0; pointer-events: none; color: var(--bsd-pink); overflow: visible; }
-.bsd-path-connection { animation: bsd-connect .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
+.bsd-path-connection { pointer-events: stroke; animation: bsd-connect .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
 .bsd-path-endpoint { margin-top: 5px; color: var(--bsd-pink); font-size: 10px; }
 .bsd-path img { display: block; width: 52px; height: 52px; border-radius: 18px; object-fit: cover; transition: transform .2s; }
 .bsd-path a:hover img { transform: translateY(-4px) rotate(-3deg); }

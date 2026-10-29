@@ -490,6 +490,47 @@ test("下拉候选仅确认后切换，Escape 分层关闭，离开或重开不�
   await pending;
 });
 
+test("无向关联逐段展示实际箭头，并提供悬停与读屏关系说明", async (t) => {
+  const env = browser({
+    edges: { alice: ["b"], b: ["alice", "c"], c: [], bob: ["c"] },
+  });
+  t.after(() => env.window.close());
+  const session = initialize(env.window, { fetch: env.fetch });
+  session.open();
+  session.setMode("undirected");
+  await session.fill(1, "bob");
+  await session.run();
+  const { document } = env.window;
+  const lines = [...document.querySelectorAll(".bsd-path-connection")];
+  assert.deepEqual(
+    lines.map((line) => [
+      line.hasAttribute("marker-end"),
+      line.hasAttribute("marker-start"),
+    ]),
+    [
+      [true, true],
+      [true, false],
+      [false, true],
+    ],
+  );
+  const descriptions = [
+    "@alice 与 @b 互相添加为好友",
+    "@b 将 @c 添加为好友",
+    "@bob 将 @c 添加为好友",
+  ];
+  const links = [...document.querySelectorAll(".bsd-path a")];
+  lines.forEach((line, index) => {
+    assert.equal(line.querySelector("title").textContent, descriptions[index]);
+    assert.equal(env.window.getComputedStyle(line).pointerEvents, "stroke");
+    const description = document.getElementById(
+      links[index].getAttribute("aria-describedby"),
+    );
+    assert.equal(description.textContent, descriptions[index]);
+    assert.equal(description.closest('[aria-hidden="true"]'), null);
+  });
+  assert.equal(links.at(-1).hasAttribute("aria-describedby"), false);
+});
+
 test("超过六跳仍展示完整路径并提供轻量彩蛋", async () => {
   const ids = ["alice", "a", "b", "c", "d", "e", "f", "g", "bob"];
   const edges = Object.fromEntries(

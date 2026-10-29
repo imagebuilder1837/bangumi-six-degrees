@@ -4,7 +4,16 @@ import { JSDOM } from "jsdom";
 import { layoutPath } from "../src/path-layout.mjs";
 
 test("蛇形布局随宽度重排，保留用户顺序、方向与完整长路径", () => {
-  for (const mode of ["directed", "mutual", "undirected"]) {
+  for (const pattern of [
+    [{ forward: true, reverse: false }],
+    [{ forward: false, reverse: true }],
+    [{ forward: true, reverse: true }],
+    [
+      { forward: true, reverse: false },
+      { forward: false, reverse: true },
+      { forward: true, reverse: true },
+    ],
+  ]) {
     for (const count of [1, 2, 6, 7, 8, 9, 15]) {
       const { window } = new JSDOM("<div></div>");
       const path = window.document.querySelector("div");
@@ -36,14 +45,21 @@ test("蛇形布局随宽度重排，保留用户顺序、方向与完整长路�
           disconnected = true;
         }
       };
-      const layout = layoutPath(window, path, mode);
+      const relations = Array.from(
+        { length: count - 1 },
+        (_, index) => pattern[index % pattern.length],
+      );
+      const layout = layoutPath(window, path, relations);
       assert.deepEqual([...path.querySelectorAll("a")], nodes);
       const lines = [...path.querySelectorAll("svg > path")];
       assert.equal(lines.length, count - 1);
-      for (const line of lines) {
-        assert.equal(line.hasAttribute("marker-end"), mode !== "undirected");
-        assert.equal(line.hasAttribute("marker-start"), mode === "mutual");
-      }
+      lines.forEach((line, index) => {
+        assert.equal(line.hasAttribute("marker-end"), relations[index].forward);
+        assert.equal(
+          line.hasAttribute("marker-start"),
+          relations[index].reverse,
+        );
+      });
       if (count >= 6) {
         assert.deepEqual(
           nodes

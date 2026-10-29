@@ -109,6 +109,36 @@ export async function search({
         )
         .map((direction) => [id, direction]),
     );
+  // Both expansion and direction completion enter the same observation view.
+  async function load(keys, index = -1, ids = []) {
+    const records = keys.length ? await source.load(keys, { signal }) : [];
+    signal.throwIfAborted();
+    for (const key of keys) attempted.add(JSON.stringify(key));
+    const affected = new Set();
+    for (const record of records) {
+      observations++;
+      for (const id of graph.observe(record)) affected.add(id);
+    }
+    for (const id of ids) {
+      if (graph.complete(id, mode, index === 1)) affected.add(id);
+      else sides[index].blocked.add(id);
+    }
+    sides.forEach((side, sideIndex) => {
+      const changes = new Map();
+      for (const id of affected) {
+        if (graph.complete(id, mode, sideIndex === 1)) side.blocked.delete(id);
+        if (
+          side.expanded.has(id) ||
+          (sideIndex === index &&
+            ids.includes(id) &&
+            graph.complete(id, mode, sideIndex === 1))
+        ) {
+          changes.set(id, graph.neighbors(id, mode, sideIndex === 1));
+        }
+      }
+      side.change(changes);
+    });
+  }
   while (true) {
     signal.throwIfAborted();
     if (graph.invalid(start) || graph.invalid(end))
@@ -123,14 +153,35 @@ export async function search({
         meeting = id;
       }
     }
-    onProgress({
+    const progress = {
       visited: new Set(sides.flatMap((side) => [...side.distances.keys()]))
         .size,
       observations,
-    });
+    };
     if (meeting !== undefined && length <= layers[0].depth + layers[1].depth) {
-      return { status: "found", path: pathThrough(sides, meeting) };
+      const path = pathThrough(sides, meeting);
+      const relations = path.slice(1).map((id, index) => ({
+        forward: graph.edge(path[index], id),
+        reverse: graph.edge(id, path[index]),
+      }));
+      const unknown = relations.findIndex(
+        ({ forward, reverse }) => forward === null || reverse === null,
+      );
+      onProgress({ ...progress, stage: "relations" });
+      if (unknown === -1) return { status: "found", path, relations };
+      const [from, to] =
+        relations[unknown].forward === null
+          ? [path[unknown], path[unknown + 1]]
+          : [path[unknown + 1], path[unknown]];
+      const key = [
+        [from, "friends"],
+        [to, "rev_friends"],
+      ].find((key) => !attempted.has(JSON.stringify(key)));
+      if (!key) return { status: "incomplete" };
+      await load([key]);
+      continue;
     }
+    onProgress({ ...progress, stage: "search" });
     if (layers.some((layer) => layer.depth === Infinity))
       return { status: "unreachable" };
     if (layers.every((layer) => !layer.ids.length))
@@ -152,33 +203,6 @@ export async function search({
     );
     signal.throwIfAborted();
     const index = costs[0] <= costs[1] ? 0 : 1;
-    const records = keys[index].length
-      ? await source.load(keys[index], { signal })
-      : [];
-    signal.throwIfAborted();
-    for (const key of keys[index]) attempted.add(JSON.stringify(key));
-    const affected = new Set();
-    for (const record of records) {
-      observations++;
-      for (const id of graph.observe(record)) affected.add(id);
-    }
-    for (const id of layers[index].ids) {
-      if (graph.complete(id, mode, index === 1)) affected.add(id);
-      else sides[index].blocked.add(id);
-    }
-    sides.forEach((side, sideIndex) => {
-      const changes = new Map();
-      for (const id of affected) {
-        if (
-          side.expanded.has(id) ||
-          (sideIndex === index &&
-            layers[index].ids.includes(id) &&
-            graph.complete(id, mode, sideIndex === 1))
-        ) {
-          changes.set(id, graph.neighbors(id, mode, sideIndex === 1));
-        }
-      }
-      side.change(changes);
-    });
+    await load(keys[index], index, layers[index].ids);
   }
 }

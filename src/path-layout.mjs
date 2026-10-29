@@ -1,7 +1,7 @@
 const svgNS = "http://www.w3.org/2000/svg";
 
 // Layout only: the DOM and tab order remain the original start-to-end sequence.
-export function layoutPath(window, path, mode) {
+export function layoutPath(window, path, relations) {
   const nodes = [...path.querySelectorAll("a")];
   const svg = window.document.createElementNS(svgNS, "svg");
   svg.classList.add("bsd-path-lines");
@@ -17,9 +17,14 @@ export function layoutPath(window, path, mode) {
     line.setAttribute("fill", "none");
     line.setAttribute("stroke", "currentColor");
     line.setAttribute("stroke-width", "1.5");
-    if (mode !== "undirected")
+    if (relations[index].description) {
+      const title = window.document.createElementNS(svgNS, "title");
+      title.textContent = relations[index].description;
+      line.append(title);
+    }
+    if (relations[index].forward)
       line.setAttribute("marker-end", `url(#${markerId})`);
-    if (mode === "mutual")
+    if (relations[index].reverse)
       line.setAttribute("marker-start", `url(#${markerId})`);
     svg.append(line);
     return line;

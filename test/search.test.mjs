@@ -33,14 +33,31 @@ test("三种关系模式在不均衡扩展下与穷举简单路径的最短长�
         expected,
         JSON.stringify({ edges, mode }),
       );
+      if (result.path) {
+        assert.deepEqual(
+          result.relations,
+          result.path.slice(1).map((id, index) => ({
+            forward: edges[result.path[index]].includes(id),
+            reverse: edges[id].includes(result.path[index]),
+          })),
+        );
+      }
     }
   }
 });
 
 test("同一用户是零跳，六跳以上仍然返回路径", async () => {
   assert.deepEqual(
-    (await search({ start: "a", end: "a", source: source({}) })).path,
-    ["a"],
+    await search({
+      start: "a",
+      end: "a",
+      source: {
+        async load() {
+          throw new Error("零跳不应读取关系列表");
+        },
+      },
+    }),
+    { status: "found", path: ["a"], relations: [] },
   );
   const edges = Object.fromEntries(
     Array.from({ length: 8 }, (_, i) => [
@@ -200,6 +217,87 @@ test("局部重证保留有效支路，网络按后到观察而非缓存时间�
     ).path,
     ["a", "c", "w", "z"],
   );
+});
+
+test("补查方向推翻旧路径时重证换路，复用本轮已取列表", async () => {
+  const lists = {
+    a: { friends: ["b", "d"], rev_friends: [] },
+    b: { friends: ["a"], rev_friends: ["a"] },
+    d: { friends: ["e"], rev_friends: ["a"] },
+    e: { friends: ["z"], rev_friends: ["d"] },
+    z: { friends: [], rev_friends: ["b", "e"] },
+  };
+  const loaded = new Set();
+  const result = await search({
+    start: "a",
+    end: "z",
+    mode: "directed",
+    source: {
+      async load(keys) {
+        return keys.map(([id, direction]) => {
+          const key = JSON.stringify([id, direction]);
+          assert.equal(loaded.has(key), false, `不应重抓 ${key}`);
+          loaded.add(key);
+          return {
+            id,
+            direction,
+            snapshot: { status: "available", members: lists[id][direction] },
+          };
+        });
+      },
+    },
+  });
+  assert.deepEqual(result.path, ["a", "d", "e", "z"]);
+  assert.deepEqual(result.relations, [
+    { forward: true, reverse: false },
+    { forward: true, reverse: false },
+    { forward: true, reverse: false },
+  ]);
+});
+
+test("缺少反方向观察时不把未知当作不存在，不发布最终路径", async () => {
+  const result = await search({
+    start: "a",
+    end: "z",
+    source: {
+      async load(keys) {
+        return keys
+          .filter(([id, direction]) => id === "a" && direction === "friends")
+          .map(([id, direction]) => ({
+            id,
+            direction,
+            snapshot: { status: "available", members: ["z"] },
+          }));
+      },
+    },
+  });
+  assert.deepEqual(result, { status: "incomplete" });
+});
+
+test("单向好友补齐反方向后才返回互相添加的最终路径", async () => {
+  const result = await search({
+    start: "a",
+    end: "z",
+    mode: "directed",
+    source: source({ a: ["z"], z: ["a"] }),
+  });
+  assert.deepEqual(result.path, ["a", "z"]);
+  assert.deepEqual(result.relations, [{ forward: true, reverse: true }]);
+});
+
+test("无向关联的最终路径逐段说明实际好友方向", async () => {
+  const result = await search({
+    start: "a",
+    end: "z",
+    mode: "undirected",
+    source: source({ a: ["b"], b: ["a", "c"], c: [], z: ["c"] }),
+  });
+  assert.deepEqual(result.path, ["a", "b", "c", "z"]);
+  assert.deepEqual(result.relations, [
+    { forward: true, reverse: true },
+    { forward: true, reverse: false },
+    { forward: false, reverse: true },
+  ]);
 });
 
 test("无向关联可逆行，双向好友仅通过互相添加的边", async () => {

@@ -4,6 +4,94 @@ import { initialize } from "../src/entry.mjs";
 import { browser, input, until } from "./support/browser.mjs";
 import { deferred } from "./support/async.mjs";
 
+test("补齐好友方向期间保持探索中，完成后一次性发布路径及关系", async (t) => {
+  const gate = deferred();
+  let waiting = false;
+  const env = browser({
+    beforeFetch: async (url) => {
+      if (url.endsWith("/bob/friends")) {
+        waiting = true;
+        await gate.promise;
+      }
+    },
+  });
+  t.after(() => {
+    gate.resolve();
+    env.window.close();
+  });
+  const session = initialize(env.window, { fetch: env.fetch });
+  session.open();
+  session.setMode("directed");
+  await session.fill(1, "bob");
+  const pending = session.run();
+  await until(() => waiting);
+  assert.equal(session.state.phase, "running");
+  assert.equal(session.state.result, null);
+  assert.equal(session.state.canStop, true);
+  assert.equal(session.state.canEdit, false);
+  assert.match(session.state.message, /核实.*好友方向/);
+  assert.equal(session.state.progress.observations, 1);
+  gate.resolve();
+  await pending;
+  assert.equal(session.state.phase, "complete");
+  assert.deepEqual(session.state.result.relations, [
+    { forward: true, reverse: true },
+  ]);
+  assert.equal(session.state.progress.observations, 2);
+});
+
+test("好友方向补查失败不发布最终路径，也不误报不可达", async (t) => {
+  const env = browser({
+    beforeFetch: async (url) => {
+      if (url.endsWith("/bob/friends"))
+        return new Response("", { status: 403 });
+    },
+  });
+  t.after(() => env.window.close());
+  const session = initialize(env.window, { fetch: env.fetch });
+  session.open();
+  session.setMode("directed");
+  await session.fill(1, "bob");
+  await session.run();
+  assert.equal(session.state.phase, "error");
+  assert.equal(session.state.result, null);
+  assert.match(session.state.message, /好友方向核实中断/);
+  assert.doesNotMatch(session.state.message, /不可达/);
+  assert.equal(env.window.document.querySelector(".bsd-path"), null);
+});
+
+test("好友方向补查可以及时停止，迟到响应不发布路径", async (t) => {
+  const gate = deferred();
+  let waiting = false;
+  const env = browser({
+    beforeFetch: async (url) => {
+      if (url.endsWith("/bob/friends")) {
+        waiting = true;
+        await gate.promise;
+      }
+    },
+  });
+  t.after(() => {
+    gate.resolve();
+    env.window.close();
+  });
+  const session = initialize(env.window, { fetch: env.fetch });
+  session.open();
+  session.setMode("directed");
+  await session.fill(1, "bob");
+  const pending = session.run();
+  await until(() => waiting);
+  session.stop();
+  await pending;
+  assert.equal(session.state.phase, "stopped");
+  assert.equal(session.state.result, null);
+  assert.equal(session.state.canRun, true);
+  gate.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(session.state.result, null);
+  assert.equal(env.window.document.querySelector(".bsd-path"), null);
+});
+
 test("停止后立即重开探索，旧任务的收尾不能解锁或覆盖新任务", async () => {
   const gates = [];
   const env = browser({
