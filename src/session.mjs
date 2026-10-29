@@ -1,6 +1,7 @@
 import { search } from "./search.mjs";
 import { createDataSource } from "./data.mjs";
 import { normalizeInput } from "./site.mjs";
+import { createExclusions } from "./exclusions.mjs";
 
 const modes = ["mutual", "directed", "undirected"];
 const initialMessage = "选两位班友，看看相隔几跳。";
@@ -43,7 +44,19 @@ export function createSession({
   } catch {
     // Storage denial must not prevent opening or network searches.
   }
+  const exclusions = createExclusions({
+    site,
+    store,
+    storage,
+    now,
+    onUpdate: () => emit(),
+    onChange: () => {
+      clearResult();
+      emit();
+    },
+  });
   const state = {
+    exclusions: exclusions.state,
     visible: false,
     phase: "idle",
     mode: "mutual",
@@ -58,8 +71,12 @@ export function createSession({
     canEdit: !busy(),
     canRun:
       !busy() &&
+      state.exclusions.activity !== "resolving" &&
       !state.endpoints.some((item) => item.activity === "randomizing"),
-    canStop: busy() || state.endpoints.some((item) => item.activity !== "idle"),
+    canStop:
+      busy() ||
+      state.exclusions.activity === "resolving" ||
+      state.endpoints.some((item) => item.activity !== "idle"),
   });
   let snapshot = immutable({ ...state, ...permissions() });
   const listeners = new Set();
@@ -239,6 +256,18 @@ export function createSession({
       return () => listeners.delete(listener);
     },
     setInput,
+    setExcludedInput(value) {
+      if (permissions().canEdit) exclusions.setInput(value);
+    },
+    addExcluded() {
+      return permissions().canEdit ? exclusions.add() : Promise.resolve();
+    },
+    removeExcluded(id) {
+      if (permissions().canEdit) exclusions.remove(id);
+    },
+    cancelExcluded() {
+      exclusions.cancel();
+    },
     resolve(index) {
       return permissions().canEdit ? resolveEndpoint(index) : Promise.resolve();
     },
@@ -311,11 +340,13 @@ export function createSession({
           start: state.endpoints[0].user.id,
           end: state.endpoints[1].user.id,
           mode: state.mode,
+          excluded: state.exclusions.users.map(({ id }) => id),
         },
         abort,
       );
     },
     stop() {
+      exclusions.cancel();
       if (!permissions().canStop) return;
       controller?.abort(new DOMException("用户停止探索", "AbortError"));
       randomUsers?.cancel();

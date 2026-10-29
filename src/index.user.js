@@ -872,7 +872,7 @@
         );
       },
       /**
-       * Validate and detach input, then atomically merge by observation time.
+       * Validate and detach input, then atomically replace the requested records.
        * Resolve only on transaction completion; reject with the signal reason
        * on cancellation, otherwise a RelationshipStoreError with a stable code.
        * @param {Batch} batch
@@ -884,20 +884,11 @@
         return transact(
           indexedDB,
           "readwrite",
-          (transaction, fail) => {
-            const merge = (name, key, value) => {
-              const store = transaction.objectStore(name);
-              readRecord(
-                store,
-                key,
-                (previous) => {
-                  if (!previous || value.fetchedAt >= previous.fetchedAt)
-                    store.put({ version: 1, value }, key);
-                },
-                fail,
-              );
-            };
-            for (const { name, key, value } of entries) merge(name, key, value);
+          (transaction) => {
+            for (const { name, key, value } of entries) {
+              signal?.throwIfAborted();
+              transaction.objectStore(name).put({ version: 1, value }, key);
+            }
           },
           signal,
         );
@@ -1219,12 +1210,16 @@
     start,
     end,
     mode = "directed",
+    excluded = [],
     source,
     signal = new AbortController().signal,
     onProgress = () => {},
   }) {
     if (!["directed", "undirected", "mutual"].includes(mode))
       throw new Error("未知关系模式");
+    const excludedIds = new Set(excluded);
+    excludedIds.delete(start);
+    excludedIds.delete(end);
     const graph = new ObservationGraph();
     const sides = [new SearchSide(start), new SearchSide(end)];
     const attempted = new Set();
@@ -1265,7 +1260,14 @@
               ids.includes(id) &&
               graph.complete(id, mode, sideIndex === 1))
           ) {
-            changes.set(id, graph.neighbors(id, mode, sideIndex === 1));
+            changes.set(
+              id,
+              new Set(
+                [...graph.neighbors(id, mode, sideIndex === 1)].filter(
+                  (other) => !excludedIds.has(other),
+                ),
+              ),
+            );
           }
         }
         side.change(changes);
@@ -1344,6 +1346,149 @@
     }
   }
 
+  const storageKey = "bangumi-six-degrees:excluded-intermediates";
+
+  function createExclusions({ site, store, storage, now, onUpdate, onChange }) {
+    const state = {
+      input: "",
+      users: [],
+      activity: "idle",
+      message: "",
+      storageWarning: "",
+      cacheWarning: "",
+    };
+    try {
+      const raw = storage?.()?.getItem(storageKey);
+      if (raw !== null && raw !== undefined) {
+        const saved = JSON.parse(raw);
+        if (
+          saved.version !== 1 ||
+          !Array.isArray(saved.ids) ||
+          saved.ids.some(
+            (id) => typeof id !== "string" || normalizeInput(id) !== id,
+          )
+        )
+          throw new Error("名单格式无效");
+        state.users = [...new Set(saved.ids)].map((id) => ({
+          id,
+          name: id,
+          avatar: "",
+        }));
+      }
+    } catch {
+      state.storageWarning =
+        "无法读取排除名单，已按空名单继续；可重新添加班友。";
+    }
+    function save() {
+      try {
+        storage().setItem(
+          storageKey,
+          JSON.stringify({ version: 1, ids: state.users.map(({ id }) => id) }),
+        );
+        state.storageWarning = "";
+      } catch {
+        state.storageWarning =
+          "排除名单未能保存，当前页面仍生效，刷新后可能丢失。";
+      }
+      onChange();
+    }
+    async function loadProfiles() {
+      if (!state.users.length) return;
+      try {
+        const cached = await store.read({
+          users: state.users.map(({ id }) => id),
+        });
+        state.users = state.users.map((user) => {
+          const profile = cached.users[user.id];
+          return profile &&
+            (user.fetchedAt === undefined || profile.fetchedAt > user.fetchedAt)
+            ? { ...user, ...profile }
+            : user;
+        });
+        onUpdate();
+      } catch {
+        state.cacheWarning = "无法读取用户资料缓存，排除名单仍生效。";
+        onUpdate();
+      }
+    }
+    // Notify only after the owning session has finished initialization.
+    void Promise.resolve().then(loadProfiles);
+    let operation;
+    function cancelOperation() {
+      if (!operation) return false;
+      operation.abort();
+      operation = undefined;
+      state.activity = "idle";
+      state.message = "已取消添加。";
+      return true;
+    }
+    return {
+      state,
+      cancel() {
+        if (cancelOperation()) onUpdate();
+      },
+      setInput(value) {
+        cancelOperation();
+        state.input = value;
+        state.message = "";
+        onUpdate();
+      },
+      async add() {
+        if (operation) return;
+        if (!state.input.trim()) {
+          state.message = "请先填入用户标识。";
+          onUpdate();
+          return;
+        }
+        const abort = new AbortController();
+        operation = abort;
+        state.activity = "resolving";
+        state.message = "正在确认用户…";
+        onUpdate();
+        let user;
+        try {
+          user = {
+            ...(await site.resolve(state.input, { signal: abort.signal })),
+            fetchedAt: now(),
+          };
+          if (operation !== abort) return;
+        } catch (error) {
+          if (operation !== abort) return;
+          operation = undefined;
+          state.activity = "idle";
+          state.message = `无法添加班友：${error.message}`;
+          onUpdate();
+          return;
+        }
+        operation = undefined;
+        state.activity = "idle";
+        if (state.users.some(({ id }) => id === user.id)) {
+          state.message = "这位班友已在名单中。";
+          onUpdate();
+          return;
+        }
+        state.users.push(user);
+        state.input = "";
+        state.message = "已添加排除中转的班友。";
+        save();
+        try {
+          const { name, avatar, fetchedAt } = user;
+          await store.commit({
+            users: { [user.id]: { name, avatar, fetchedAt } },
+          });
+        } catch {
+          state.cacheWarning = "用户资料缓存保存失败，排除名单仍生效。";
+          onUpdate();
+        }
+      },
+      remove(id) {
+        if (!state.users.some((user) => user.id === id)) return;
+        state.users = state.users.filter((user) => user.id !== id);
+        save();
+      },
+    };
+  }
+
   const modes = ["mutual", "directed", "undirected"];
   const initialMessage = "选两位班友，看看相隔几跳。";
 
@@ -1385,7 +1530,19 @@
     } catch {
       // Storage denial must not prevent opening or network searches.
     }
+    const exclusions = createExclusions({
+      site,
+      store,
+      storage,
+      now,
+      onUpdate: () => emit(),
+      onChange: () => {
+        clearResult();
+        emit();
+      },
+    });
     const state = {
+      exclusions: exclusions.state,
       visible: false,
       phase: "idle",
       mode: "mutual",
@@ -1400,9 +1557,12 @@
       canEdit: !busy(),
       canRun:
         !busy() &&
+        state.exclusions.activity !== "resolving" &&
         !state.endpoints.some((item) => item.activity === "randomizing"),
       canStop:
-        busy() || state.endpoints.some((item) => item.activity !== "idle"),
+        busy() ||
+        state.exclusions.activity === "resolving" ||
+        state.endpoints.some((item) => item.activity !== "idle"),
     });
     let snapshot = immutable({ ...state, ...permissions() });
     const listeners = new Set();
@@ -1586,6 +1746,18 @@
         return () => listeners.delete(listener);
       },
       setInput,
+      setExcludedInput(value) {
+        if (permissions().canEdit) exclusions.setInput(value);
+      },
+      addExcluded() {
+        return permissions().canEdit ? exclusions.add() : Promise.resolve();
+      },
+      removeExcluded(id) {
+        if (permissions().canEdit) exclusions.remove(id);
+      },
+      cancelExcluded() {
+        exclusions.cancel();
+      },
       resolve(index) {
         return permissions().canEdit
           ? resolveEndpoint(index)
@@ -1660,11 +1832,13 @@
             start: state.endpoints[0].user.id,
             end: state.endpoints[1].user.id,
             mode: state.mode,
+            excluded: state.exclusions.users.map(({ id }) => id),
           },
           abort,
         );
       },
       stop() {
+        exclusions.cancel();
         if (!permissions().canStop) return;
         controller?.abort(new DOMException("用户停止探索", "AbortError"));
         randomUsers?.cancel();
@@ -1717,15 +1891,40 @@
 .bsd-endpoint-info { min-width: 0; }
 .bsd-endpoint-label { display: block; margin-bottom: 2px; color: var(--bsd-muted); font-size: 10px; }
 .bsd-endpoint-name, .bsd-endpoint-placeholder { display: block; font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bsd-input { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--bsd-fg); }
-.bsd-input input { min-width: 0; width: 100%; padding: 3px 0; border: 0; border-bottom: 1px solid var(--bsd-line); background: transparent; font-size: 12px; border-radius: 0; box-shadow: none; }
+.bsd-input, .bsd-exclusions-input { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 5px 10px; border: 1px solid var(--bsd-line); border-radius: 12px; font-size: 12px; color: var(--bsd-fg); }
+.bsd-input > span, .bsd-exclusions-input > span { flex: none; }
+.bsd-input input, .bsd-exclusions-input input { min-width: 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; box-shadow: none; }
 .bsd-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; }
 .bsd-shortcuts button { padding: 4px 0 0; border: 0; background: none; color: var(--bsd-pink); font-size: 11px; box-shadow: none; }
 .bsd-shortcuts button:hover { text-decoration: underline; }
 .bsd-endpoint[data-randomizing="true"] .bsd-avatar { animation: bsd-shuffle .7s ease-in-out infinite; }
 .bsd-swap { padding: 0; width: 33px; height: 33px; border: 1px solid var(--bsd-line); border-radius: 50%; background: var(--bsd-bg); color: var(--bsd-pink) !important; font-size: 19px !important; line-height: 1; }
 .bsd-swap:hover:not(:disabled) { transform: rotate(180deg); }
-.bsd-mode { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; padding: 18px 0; position: relative; }
+.bsd-mode { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 10px; padding: 18px 0; position: relative; }
+.bsd-mode-choice { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; }
+.bsd-dialog .bsd-exclusions-toggle { grid-column: 3; justify-self: end; white-space: nowrap; padding: 4px 2px; border: 0; border-radius: 4px; background: transparent; color: var(--bsd-muted); font-size: 11px; box-shadow: none; }
+.bsd-exclusions-toggle::after { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 3px 3px 7px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.bsd-exclusions-toggle[aria-expanded="true"]::after { margin-bottom: 0; transform: rotate(225deg); }
+.bsd-dialog .bsd-exclusions-toggle:hover { color: var(--bsd-fg); background: #00000008; }
+.bsd-dialog .bsd-exclusions-toggle:not(:disabled):active { transform: none; }
+.bsd-exclusions { position: relative; margin-bottom: 18px; padding: 14px 16px; border: 1px solid var(--bsd-line); border-radius: 16px; background: var(--bsd-bg); }
+.bsd-exclusions-note, .bsd-exclusions-empty, .bsd-exclusions-feedback, .bsd-exclusions-warning { margin: 0; color: var(--bsd-muted); font-size: 11px; overflow-wrap: anywhere; }
+.bsd-exclusions-entry { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.bsd-exclusions-input { flex: 1; }
+.bsd-exclusions-entry button { flex: none; padding: 5px 12px; border: 1px solid var(--bsd-line); border-radius: 14px; background: var(--bsd-soft); color: var(--bsd-pink); font-size: 12px; }
+.bsd-exclusions-entry [data-action="cancel-excluded"] { padding-inline: 5px; border-color: transparent; background: transparent; color: var(--bsd-muted); }
+.bsd-exclusions-feedback:not(:empty), .bsd-exclusions-warning, .bsd-exclusions-empty { margin-top: 8px; }
+.bsd-exclusions-warning { color: #a96c20; }
+.bsd-exclusions-list { margin: 8px 0 0; padding: 0; list-style: none; }
+.bsd-exclusions-list:empty { display: none; }
+.bsd-excluded-user { display: grid; grid-template-columns: 32px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 9px 0; }
+.bsd-excluded-user + .bsd-excluded-user { border-top: 1px solid var(--bsd-line); }
+.bsd-excluded-user img { width: 32px; height: 32px; border-radius: 11px; object-fit: cover; background: var(--bsd-soft); }
+.bsd-excluded-user div { min-width: 0; }
+.bsd-excluded-user strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.bsd-excluded-user small { display: block; color: var(--bsd-muted); font-size: 11px; overflow-wrap: anywhere; }
+.bsd-excluded-user button { padding: 4px 0 4px 8px; border: 0; background: transparent; color: var(--bsd-pink); font-size: 11px; }
+.bsd-excluded-user button:hover:not(:disabled) { text-decoration: underline; }
 .bsd-mode-trigger { border: 1px solid var(--bsd-line); background: var(--bsd-bg); border-radius: 20px; padding: 6px 15px; font-size: 12px !important; }
 .bsd-mode-options { position: fixed; z-index: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--bsd-pink) transparent; padding: 5px; box-sizing: border-box; border: 1px solid var(--bsd-line); border-radius: 16px; background: var(--bsd-bg); color: var(--bsd-fg); font: 12px/1.65 system-ui, sans-serif; text-align: center; }
 .bsd-mode-options [role="option"] { padding: 8px; border-radius: 11px; cursor: pointer; }
@@ -1771,6 +1970,7 @@
 @keyframes bsd-connect { from { opacity: 0; } to { opacity: 1; } }
 @keyframes bsd-pulse { 0%, 100% { opacity: .3; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
 @keyframes bsd-shuffle { 25% { transform: rotate(-8deg); } 70% { transform: rotate(6deg); } }
+[data-theme="dark"] .bsd-exclusions-toggle:hover { background: #ffffff0d; }
 [data-theme="dark"] .bsd-overlay { --bsd-bg: #2b2831; --bsd-fg: #f2e9ef; --bsd-muted: #b6aab9; --bsd-soft: #36303c; --bsd-line: #4c404d; --bsd-pink: #f09bb2; --bsd-shadow: #0004; color-scheme: dark; }
 @media (max-width: 600px) {
   .bsd-overlay { padding: 12px; }.bsd-dialog { max-height: 94dvh; border-radius: 21px; }
@@ -1779,7 +1979,9 @@
   .bsd-top { grid-template-columns: minmax(0,1fr); gap: 7px; }
   .bsd-endpoint { padding: 9px 13px; grid-template-columns: 44px minmax(0,1fr); }.bsd-avatar { width: 44px; height: 44px; border-radius: 14px; }
   .bsd-swap { justify-self: center; width: 27px; height: 27px; font-size: 16px !important; transform: rotate(90deg); }
-  .bsd-mode { gap: 6px; }.bsd-mode-note { width: 100%; text-align: center; }
+  .bsd-mode { display: flex; flex-direction: column; gap: 9px; }.bsd-mode-choice { gap: 6px; }.bsd-mode-note { width: 100%; text-align: center; }
+  .bsd-dialog .bsd-exclusions-toggle { align-self: flex-end; }
+  .bsd-exclusions { padding: 12px; }.bsd-exclusions-entry { gap: 5px; }.bsd-exclusions-entry button { padding-inline: 9px; }
   .bsd-message { font-size: 20px; }.bsd-hop-count { font-size: 38px; }.bsd-detail, .bsd-progress { font-size: 11px; }
   .bsd-footer { padding: 14px 18px; flex-wrap: wrap; gap: 10px; }.bsd-hint { font-size: 10px; }.bsd-actions { margin-left: auto; }
   .bsd-actions [data-action="explore"] { padding: 10px 20px; }
@@ -2054,9 +2256,18 @@
     const result = state.result;
     const mode = modeNames[result?.conditions.mode ?? state.mode];
     if (result) {
+      const restrictions = result.conditions.excluded?.length
+        ? "与当前排除条件"
+        : "";
       return {
-        found: ["已确认最短路径", `${mode} · 结论基于本次关系数据`],
-        unreachable: ["探索完成", `结论基于本次关系数据与「${mode}」模式。`],
+        found: [
+          "已确认最短路径",
+          `${mode} · 结论基于本次关系数据${restrictions}`,
+        ],
+        unreachable: [
+          "探索完成",
+          `结论基于本次关系数据与「${mode}」模式${restrictions}。`,
+        ],
         incomplete: ["路径待确认", "可以重新探索，或调整关系模式。"],
         invalid: ["调整用户", "请调整起点或终点用户后重新探索。"],
       }[result.status];
@@ -2098,7 +2309,13 @@
       ${endpoint("起点用户", 0)}
       <button type="button" class="bsd-swap" data-action="swap" aria-label="交换起点与终点">⇄</button>
       ${endpoint("终点用户", 1)}
-    </div><div class="bsd-mode"><button type="button" class="bsd-mode-trigger" aria-label="关系模式"></button><span class="bsd-mode-note"></span></div>
+    </div><div class="bsd-mode"><div class="bsd-mode-choice"><button type="button" class="bsd-mode-trigger" aria-label="关系模式"></button><span class="bsd-mode-note"></span></div><button type="button" class="bsd-exclusions-toggle" data-action="toggle-exclusions" aria-expanded="false" aria-controls="bsd-exclusions">排除中转</button></div>
+    <section id="bsd-exclusions" class="bsd-exclusions" aria-label="排除中转名单" hidden>
+      <p class="bsd-exclusions-note">以下班友不会作为中转，仍可作为起点或终点。</p>
+      <div class="bsd-exclusions-entry"><label class="bsd-exclusions-input"><span>@</span><input aria-label="排除中转的用户标识" aria-describedby="bsd-exclusions-feedback" placeholder="请输入用户标识" autocomplete="off" spellcheck="false"></label><button type="button" data-action="add-excluded">添加</button><button type="button" data-action="cancel-excluded" hidden>取消</button></div>
+      <p id="bsd-exclusions-feedback" class="bsd-exclusions-feedback" role="status"></p><p class="bsd-exclusions-warning" role="status" hidden></p>
+      <p class="bsd-exclusions-empty">暂未排除班友。</p><ul class="bsd-exclusions-list"></ul>
+    </section>
     <div class="bsd-results"><div class="bsd-idle-mark" aria-hidden="true"><i></i><i></i><i></i></div><div role="status"><span class="bsd-status-label"></span><h3 class="bsd-message"></h3><p class="bsd-detail"></p></div><div class="bsd-progress"></div><div class="bsd-pulse" aria-hidden="true" hidden><i></i><i></i><i></i></div><div class="bsd-output"></div><p class="bsd-warning" role="status" hidden></p></div></div></div>
     <footer class="bsd-footer"><span id="bsd-hint" class="bsd-hint" role="status"></span><div class="bsd-actions"><button type="button" data-action="stop" hidden>停止探索</button><button type="button" data-action="explore">开始探索 ↗</button></div></footer>
   </section>`;
@@ -2118,6 +2335,88 @@
     const explore = overlay.querySelector('[data-action="explore"]');
     const stop = overlay.querySelector('[data-action="stop"]');
     const endpoints = [...overlay.querySelectorAll(".bsd-endpoint")];
+    const exclusionsToggle = overlay.querySelector(
+      '[data-action="toggle-exclusions"]',
+    );
+    const exclusionsPanel = overlay.querySelector(".bsd-exclusions");
+    const excludedInput = exclusionsPanel.querySelector("input");
+    const addExcluded = exclusionsPanel.querySelector(
+      '[data-action="add-excluded"]',
+    );
+    const cancelExcluded = exclusionsPanel.querySelector(
+      '[data-action="cancel-excluded"]',
+    );
+    const excludedRows = new Map();
+    function toggleExclusions(expanded) {
+      exclusionsToggle.setAttribute("aria-expanded", String(expanded));
+      exclusionsPanel.hidden = !expanded;
+      if (!expanded && exclusionsPanel.contains(document.activeElement))
+        exclusionsToggle.focus({ preventScroll: true });
+    }
+    exclusionsToggle.addEventListener("click", () =>
+      toggleExclusions(exclusionsPanel.hidden),
+    );
+    excludedInput.addEventListener("focus", () => excludedInput.select());
+    excludedInput.addEventListener("input", () =>
+      session.setExcludedInput(excludedInput.value),
+    );
+    excludedInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      if (!event.repeat) void session.addExcluded();
+    });
+    addExcluded.addEventListener("click", () => void session.addExcluded());
+    cancelExcluded.addEventListener("click", () => session.cancelExcluded());
+    function renderExclusions(state, busy) {
+      const exclusions = state.exclusions;
+      if (excludedInput.value !== exclusions.input)
+        excludedInput.value = exclusions.input;
+      excludedInput.disabled = busy;
+      const resolving = exclusions.activity === "resolving";
+      addExcluded.disabled = busy || resolving || !exclusions.input.trim();
+      cancelExcluded.hidden = !resolving;
+      text(addExcluded, resolving ? "确认中…" : "添加");
+      text(
+        exclusionsPanel.querySelector(".bsd-exclusions-feedback"),
+        exclusions.message,
+      );
+      const warning = exclusionsPanel.querySelector(".bsd-exclusions-warning");
+      text(warning, exclusions.cacheWarning);
+      warning.hidden = !warning.textContent;
+      exclusionsPanel.querySelector(".bsd-exclusions-empty").hidden =
+        !!exclusions.users.length;
+      const ids = new Set(exclusions.users.map(({ id }) => id));
+      for (const [id, row] of excludedRows) {
+        if (ids.has(id)) continue;
+        row.remove();
+        excludedRows.delete(id);
+      }
+      for (const user of exclusions.users) {
+        let row = excludedRows.get(user.id);
+        if (!row) {
+          row = document.createElement("li");
+          row.className = "bsd-excluded-user";
+          row.innerHTML =
+            '<a class="bsd-avatar-link" target="_blank" rel="noopener noreferrer"><img alt=""></a><div><strong></strong><small></small></div><button type="button">移除</button>';
+          const profile = row.querySelector("a");
+          profile.href = `/user/${encodeURIComponent(user.id)}`;
+          profile.setAttribute("aria-label", `打开 @${user.id} 的主页`);
+          const remove = row.querySelector("button");
+          remove.dataset.remove = user.id;
+          remove.setAttribute("aria-label", `移除 @${user.id}`);
+          remove.addEventListener("click", () =>
+            session.removeExcluded(user.id),
+          );
+          excludedRows.set(user.id, row);
+          exclusionsPanel.querySelector("ul").append(row);
+        }
+        image(row.querySelector("img"), user.avatar);
+        text(row.querySelector("strong"), user.name || user.id);
+        row.querySelector("strong").title = user.name || user.id;
+        text(row.querySelector("small"), `@${user.id}`);
+        row.querySelector("button").disabled = busy;
+      }
+    }
     const message = overlay.querySelector(".bsd-message");
     const output = overlay.querySelector(".bsd-output");
     function inputMode(mode) {
@@ -2151,6 +2450,9 @@
           if (modePicker.expanded) {
             modePicker.close();
             modeTrigger.focus({ preventScroll: true });
+          } else if (!exclusionsPanel.hidden) {
+            toggleExclusions(false);
+            exclusionsToggle.focus({ preventScroll: true });
           } else close();
           return;
         }
@@ -2229,7 +2531,7 @@
         ...dialog.querySelectorAll(
           "button:not(:disabled):not([hidden]),input:not(:disabled),select:not(:disabled),a[href]",
         ),
-      ];
+      ].filter((element) => !element.closest("[hidden]"));
       const first = focusable[0],
         last = focusable.at(-1);
       if (event.shiftKey && document.activeElement === first) {
@@ -2332,6 +2634,7 @@
       overlay.hidden = !state.visible;
       dialog.hidden = !state.visible;
       const busy = !state.canEdit;
+      renderExclusions(state, busy);
       const randomizing = state.endpoints.some(
         ({ activity }) => activity === "randomizing",
       );
@@ -2373,7 +2676,14 @@
       explore.disabled = !state.canRun;
       text(explore, busy ? "探索中…" : "开始探索 ↗");
       stop.hidden = !state.canStop;
-      text(stop, randomizing ? "停止抽取" : "停止探索");
+      text(
+        stop,
+        randomizing
+          ? "停止抽取"
+          : state.exclusions.activity === "resolving"
+            ? "取消添加"
+            : "停止探索",
+      );
       const [label, detail] = status(state);
       text(overlay.querySelector(".bsd-status-label"), label);
       text(overlay.querySelector(".bsd-detail"), detail);
@@ -2407,6 +2717,8 @@
       const hints = state.endpoints.flatMap(({ error }, index) =>
         error ? [endpointError(error, index)] : [],
       );
+      if (state.exclusions.storageWarning)
+        hints.push(state.exclusions.storageWarning);
       if (randomizing) hints.push("正在抽取班友…");
       const resolving = state.endpoints.flatMap(({ activity }, index) =>
         activity === "resolving" ? [index === 0 ? "起点用户" : "终点用户"] : [],

@@ -88,12 +88,16 @@ export async function search({
   start,
   end,
   mode = "directed",
+  excluded = [],
   source,
   signal = new AbortController().signal,
   onProgress = () => {},
 }) {
   if (!["directed", "undirected", "mutual"].includes(mode))
     throw new Error("未知关系模式");
+  const excludedIds = new Set(excluded);
+  excludedIds.delete(start);
+  excludedIds.delete(end);
   const graph = new ObservationGraph();
   const sides = [new SearchSide(start), new SearchSide(end)];
   const attempted = new Set();
@@ -133,7 +137,14 @@ export async function search({
             ids.includes(id) &&
             graph.complete(id, mode, sideIndex === 1))
         ) {
-          changes.set(id, graph.neighbors(id, mode, sideIndex === 1));
+          changes.set(
+            id,
+            new Set(
+              [...graph.neighbors(id, mode, sideIndex === 1)].filter(
+                (other) => !excludedIds.has(other),
+              ),
+            ),
+          );
         }
       }
       side.change(changes);

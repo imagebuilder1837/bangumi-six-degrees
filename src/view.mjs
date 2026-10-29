@@ -43,9 +43,18 @@ function status(state) {
   const result = state.result;
   const mode = modeNames[result?.conditions.mode ?? state.mode];
   if (result) {
+    const restrictions = result.conditions.excluded?.length
+      ? "与当前排除条件"
+      : "";
     return {
-      found: ["已确认最短路径", `${mode} · 结论基于本次关系数据`],
-      unreachable: ["探索完成", `结论基于本次关系数据与「${mode}」模式。`],
+      found: [
+        "已确认最短路径",
+        `${mode} · 结论基于本次关系数据${restrictions}`,
+      ],
+      unreachable: [
+        "探索完成",
+        `结论基于本次关系数据与「${mode}」模式${restrictions}。`,
+      ],
       incomplete: ["路径待确认", "可以重新探索，或调整关系模式。"],
       invalid: ["调整用户", "请调整起点或终点用户后重新探索。"],
     }[result.status];
@@ -87,7 +96,13 @@ export function mountView(window, session, { self, services }) {
       ${endpoint("起点用户", 0)}
       <button type="button" class="bsd-swap" data-action="swap" aria-label="交换起点与终点">⇄</button>
       ${endpoint("终点用户", 1)}
-    </div><div class="bsd-mode"><button type="button" class="bsd-mode-trigger" aria-label="关系模式"></button><span class="bsd-mode-note"></span></div>
+    </div><div class="bsd-mode"><div class="bsd-mode-choice"><button type="button" class="bsd-mode-trigger" aria-label="关系模式"></button><span class="bsd-mode-note"></span></div><button type="button" class="bsd-exclusions-toggle" data-action="toggle-exclusions" aria-expanded="false" aria-controls="bsd-exclusions">排除中转</button></div>
+    <section id="bsd-exclusions" class="bsd-exclusions" aria-label="排除中转名单" hidden>
+      <p class="bsd-exclusions-note">以下班友不会作为中转，仍可作为起点或终点。</p>
+      <div class="bsd-exclusions-entry"><label class="bsd-exclusions-input"><span>@</span><input aria-label="排除中转的用户标识" aria-describedby="bsd-exclusions-feedback" placeholder="请输入用户标识" autocomplete="off" spellcheck="false"></label><button type="button" data-action="add-excluded">添加</button><button type="button" data-action="cancel-excluded" hidden>取消</button></div>
+      <p id="bsd-exclusions-feedback" class="bsd-exclusions-feedback" role="status"></p><p class="bsd-exclusions-warning" role="status" hidden></p>
+      <p class="bsd-exclusions-empty">暂未排除班友。</p><ul class="bsd-exclusions-list"></ul>
+    </section>
     <div class="bsd-results"><div class="bsd-idle-mark" aria-hidden="true"><i></i><i></i><i></i></div><div role="status"><span class="bsd-status-label"></span><h3 class="bsd-message"></h3><p class="bsd-detail"></p></div><div class="bsd-progress"></div><div class="bsd-pulse" aria-hidden="true" hidden><i></i><i></i><i></i></div><div class="bsd-output"></div><p class="bsd-warning" role="status" hidden></p></div></div></div>
     <footer class="bsd-footer"><span id="bsd-hint" class="bsd-hint" role="status"></span><div class="bsd-actions"><button type="button" data-action="stop" hidden>停止探索</button><button type="button" data-action="explore">开始探索 ↗</button></div></footer>
   </section>`;
@@ -107,6 +122,86 @@ export function mountView(window, session, { self, services }) {
   const explore = overlay.querySelector('[data-action="explore"]');
   const stop = overlay.querySelector('[data-action="stop"]');
   const endpoints = [...overlay.querySelectorAll(".bsd-endpoint")];
+  const exclusionsToggle = overlay.querySelector(
+    '[data-action="toggle-exclusions"]',
+  );
+  const exclusionsPanel = overlay.querySelector(".bsd-exclusions");
+  const excludedInput = exclusionsPanel.querySelector("input");
+  const addExcluded = exclusionsPanel.querySelector(
+    '[data-action="add-excluded"]',
+  );
+  const cancelExcluded = exclusionsPanel.querySelector(
+    '[data-action="cancel-excluded"]',
+  );
+  const excludedRows = new Map();
+  function toggleExclusions(expanded) {
+    exclusionsToggle.setAttribute("aria-expanded", String(expanded));
+    exclusionsPanel.hidden = !expanded;
+    if (!expanded && exclusionsPanel.contains(document.activeElement))
+      exclusionsToggle.focus({ preventScroll: true });
+  }
+  exclusionsToggle.addEventListener("click", () =>
+    toggleExclusions(exclusionsPanel.hidden),
+  );
+  excludedInput.addEventListener("focus", () => excludedInput.select());
+  excludedInput.addEventListener("input", () =>
+    session.setExcludedInput(excludedInput.value),
+  );
+  excludedInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    if (!event.repeat) void session.addExcluded();
+  });
+  addExcluded.addEventListener("click", () => void session.addExcluded());
+  cancelExcluded.addEventListener("click", () => session.cancelExcluded());
+  function renderExclusions(state, busy) {
+    const exclusions = state.exclusions;
+    if (excludedInput.value !== exclusions.input)
+      excludedInput.value = exclusions.input;
+    excludedInput.disabled = busy;
+    const resolving = exclusions.activity === "resolving";
+    addExcluded.disabled = busy || resolving || !exclusions.input.trim();
+    cancelExcluded.hidden = !resolving;
+    text(addExcluded, resolving ? "确认中…" : "添加");
+    text(
+      exclusionsPanel.querySelector(".bsd-exclusions-feedback"),
+      exclusions.message,
+    );
+    const warning = exclusionsPanel.querySelector(".bsd-exclusions-warning");
+    text(warning, exclusions.cacheWarning);
+    warning.hidden = !warning.textContent;
+    exclusionsPanel.querySelector(".bsd-exclusions-empty").hidden =
+      !!exclusions.users.length;
+    const ids = new Set(exclusions.users.map(({ id }) => id));
+    for (const [id, row] of excludedRows) {
+      if (ids.has(id)) continue;
+      row.remove();
+      excludedRows.delete(id);
+    }
+    for (const user of exclusions.users) {
+      let row = excludedRows.get(user.id);
+      if (!row) {
+        row = document.createElement("li");
+        row.className = "bsd-excluded-user";
+        row.innerHTML =
+          '<a class="bsd-avatar-link" target="_blank" rel="noopener noreferrer"><img alt=""></a><div><strong></strong><small></small></div><button type="button">移除</button>';
+        const profile = row.querySelector("a");
+        profile.href = `/user/${encodeURIComponent(user.id)}`;
+        profile.setAttribute("aria-label", `打开 @${user.id} 的主页`);
+        const remove = row.querySelector("button");
+        remove.dataset.remove = user.id;
+        remove.setAttribute("aria-label", `移除 @${user.id}`);
+        remove.addEventListener("click", () => session.removeExcluded(user.id));
+        excludedRows.set(user.id, row);
+        exclusionsPanel.querySelector("ul").append(row);
+      }
+      image(row.querySelector("img"), user.avatar);
+      text(row.querySelector("strong"), user.name || user.id);
+      row.querySelector("strong").title = user.name || user.id;
+      text(row.querySelector("small"), `@${user.id}`);
+      row.querySelector("button").disabled = busy;
+    }
+  }
   const message = overlay.querySelector(".bsd-message");
   const output = overlay.querySelector(".bsd-output");
   function inputMode(mode) {
@@ -140,6 +235,9 @@ export function mountView(window, session, { self, services }) {
         if (modePicker.expanded) {
           modePicker.close();
           modeTrigger.focus({ preventScroll: true });
+        } else if (!exclusionsPanel.hidden) {
+          toggleExclusions(false);
+          exclusionsToggle.focus({ preventScroll: true });
         } else close();
         return;
       }
@@ -216,7 +314,7 @@ export function mountView(window, session, { self, services }) {
       ...dialog.querySelectorAll(
         "button:not(:disabled):not([hidden]),input:not(:disabled),select:not(:disabled),a[href]",
       ),
-    ];
+    ].filter((element) => !element.closest("[hidden]"));
     const first = focusable[0],
       last = focusable.at(-1);
     if (event.shiftKey && document.activeElement === first) {
@@ -319,6 +417,7 @@ export function mountView(window, session, { self, services }) {
     overlay.hidden = !state.visible;
     dialog.hidden = !state.visible;
     const busy = !state.canEdit;
+    renderExclusions(state, busy);
     const randomizing = state.endpoints.some(
       ({ activity }) => activity === "randomizing",
     );
@@ -360,7 +459,14 @@ export function mountView(window, session, { self, services }) {
     explore.disabled = !state.canRun;
     text(explore, busy ? "探索中…" : "开始探索 ↗");
     stop.hidden = !state.canStop;
-    text(stop, randomizing ? "停止抽取" : "停止探索");
+    text(
+      stop,
+      randomizing
+        ? "停止抽取"
+        : state.exclusions.activity === "resolving"
+          ? "取消添加"
+          : "停止探索",
+    );
     const [label, detail] = status(state);
     text(overlay.querySelector(".bsd-status-label"), label);
     text(overlay.querySelector(".bsd-detail"), detail);
@@ -394,6 +500,8 @@ export function mountView(window, session, { self, services }) {
     const hints = state.endpoints.flatMap(({ error }, index) =>
       error ? [endpointError(error, index)] : [],
     );
+    if (state.exclusions.storageWarning)
+      hints.push(state.exclusions.storageWarning);
     if (randomizing) hints.push("正在抽取班友…");
     const resolving = state.endpoints.flatMap(({ activity }, index) =>
       activity === "resolving" ? [index === 0 ? "起点用户" : "终点用户"] : [],
