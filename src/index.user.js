@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bangumi 六度分隔
 // @namespace    https://github.com/imagebuilder1837/bangumi-six-degrees
-// @version      0.1.0
+// @version      0.1.1
 // @description  探索两位 Bangumi 用户之间的最短好友关系链，支持双向好友、单向好友与无向关联三种模式。
 // @author       imagebuilder1837
 // @match        https://bgm.tv/user/*
