@@ -1724,7 +1724,7 @@
 .bsd-path-endpoint { margin-top: 5px; color: var(--bsd-pink); font-size: 10px; }
 .bsd-path img { display: block; width: 52px; height: 52px; border-radius: 18px; object-fit: cover; transition: transform .2s; }
 .bsd-path a:hover img { transform: translateY(-4px) rotate(-3deg); }
-.bsd-path strong, .bsd-path small { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.bsd-path strong, .bsd-path small { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.65; }
 .bsd-path strong { margin-top: 6px; font-size: 11px; }.bsd-path small { color: var(--bsd-muted); font-size: 10px; }
 .bsd-egg { color: var(--bsd-muted); font-size: 11px; margin: 10px 0; }
 .bsd-warning { color: #a96c20; font-size: 12px; margin: 10px 0; overflow-wrap: anywhere; }
