@@ -53,7 +53,7 @@ test("排除管理区默认收起，固定文案入口展开后可核验添加�
   assert.equal(session.state.exclusions.users.length, 0);
 });
 
-test("排除输入框获得焦点时全选，编辑期间保留光标与选区", (t) => {
+test("排除输入框获得焦点时不主动全选，编辑期间保留光标与选区", (t) => {
   const env = browser();
   t.after(() => env.window.close());
   initialize(env.window, { fetch: env.fetch });
@@ -73,9 +73,10 @@ test("排除输入框获得焦点时全选，编辑期间保留光标与选区",
       input.dispatchEvent(
         new env.window.Event("pointerdown", { bubbles: true }),
       );
+    input.setSelectionRange(3, 3);
     input.focus();
-    assert.equal(input.selectionStart, 0);
-    assert.equal(input.selectionEnd, input.value.length);
+    assert.equal(input.selectionStart, 3);
+    assert.equal(input.selectionEnd, 3);
     input.setSelectionRange(2, 4);
     input.dispatchEvent(new env.window.Event("input", { bubbles: true }));
     assert.equal(input.selectionStart, 2);

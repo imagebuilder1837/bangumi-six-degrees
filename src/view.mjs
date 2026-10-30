@@ -143,7 +143,6 @@ export function mountView(window, session, { self, services }) {
   exclusionsToggle.addEventListener("click", () =>
     toggleExclusions(exclusionsPanel.hidden),
   );
-  excludedInput.addEventListener("focus", () => excludedInput.select());
   excludedInput.addEventListener("input", () =>
     session.setExcludedInput(excludedInput.value),
   );
@@ -274,7 +273,6 @@ export function mountView(window, session, { self, services }) {
   );
   endpoints.forEach((element, index) => {
     const input = element.querySelector("input");
-    input.addEventListener("focus", () => input.select());
     input.addEventListener("input", () => session.setInput(index, input.value));
     input.addEventListener("blur", () => {
       if (session.state.canEdit) void session.resolve(index);
