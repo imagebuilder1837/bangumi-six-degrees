@@ -2,7 +2,7 @@ const svgNS = "http://www.w3.org/2000/svg";
 
 // Layout only: the DOM and tab order remain the original start-to-end sequence.
 export function layoutPath(window, path, relations) {
-  const nodes = [...path.querySelectorAll("a")];
+  const nodes = [...path.querySelectorAll(".bsd-path-user")];
   const svg = window.document.createElementNS(svgNS, "svg");
   svg.classList.add("bsd-path-lines");
   svg.setAttribute("aria-hidden", "true");

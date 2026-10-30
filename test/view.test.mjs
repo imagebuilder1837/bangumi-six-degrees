@@ -578,6 +578,12 @@ test("证据不足、不可达和失败分别呈现，候选路径和异常文�
       storageWarning: "",
       cacheWarning: "",
     },
+    history: {
+      entries: [],
+      users: {},
+      storageWarning: "",
+      cacheWarning: "",
+    },
     canEdit: false,
     canRun: false,
     canStop: true,

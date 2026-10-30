@@ -321,7 +321,10 @@ test("最终中间用户直接展示扫描头像昵称，不额外请求其主�
   document.querySelector('[data-action="explore"]').click();
   await until(() => session.state.result?.status === "found");
   const links = [...document.querySelectorAll(".bsd-path a")];
-  assert.equal(links[1].querySelector("strong").textContent, "路过的班友");
+  assert.equal(
+    links[1].parentElement.querySelector("strong").textContent,
+    "路过的班友",
+  );
   assert.equal(
     links[1].querySelector("img").getAttribute("src"),
     "https://lain.bgm.tv/carol.jpg",

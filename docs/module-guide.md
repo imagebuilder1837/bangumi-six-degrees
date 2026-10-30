@@ -11,6 +11,7 @@
 | `src/search.mjs`                    | 双向整层搜索、最短性边界、受影响依赖的局部重证                         |
 | `src/session.mjs`                   | 端点初始化与异步竞态、随机填入、运行／停止及同页会话                   |
 | `src/exclusions.mjs`                | 排除中转名单、身份核验与取消、独立偏好持久化及共享展示资料             |
+| `src/history.mjs`                   | 最近探索摘要、去重淘汰、独立持久化及共享展示资料                       |
 | `src/random-users.mjs`              | 随机候选校验、抽样范围探测及独立范围记忆                               |
 | `src/view.mjs`、`src/styles.mjs`    | 弹窗及入口、路径呈现、原站风格和响应式样式                             |
 | `src/mode-picker.mjs`               | 关系模式选择器的候选、确认、焦点及浮层定位                             |

@@ -21,8 +21,8 @@ test("蛇形布局随宽度重排，保留用户顺序、方向与完整长路�
       Object.defineProperty(path, "clientWidth", { get: () => width });
       Object.defineProperty(path, "clientHeight", { get: () => 700 });
       const nodes = Array.from({ length: count }, (_, index) => {
-        const node = window.document.createElement("a");
-        node.href = `/user/${index}`;
+        const node = window.document.createElement("div");
+        node.className = "bsd-path-user";
         node.textContent = `班友${index}`;
         Object.defineProperties(node, {
           offsetLeft: {
@@ -50,7 +50,7 @@ test("蛇形布局随宽度重排，保留用户顺序、方向与完整长路�
         (_, index) => pattern[index % pattern.length],
       );
       const layout = layoutPath(window, path, relations);
-      assert.deepEqual([...path.querySelectorAll("a")], nodes);
+      assert.deepEqual([...path.querySelectorAll(".bsd-path-user")], nodes);
       const lines = [...path.querySelectorAll("svg > path")];
       assert.equal(lines.length, count - 1);
       lines.forEach((line, index) => {
@@ -110,7 +110,7 @@ test("蛇形布局随宽度重排，保留用户顺序、方向与完整长路�
       layout.update();
       width = 344;
       layout.update();
-      assert.deepEqual([...path.querySelectorAll("a")], nodes);
+      assert.deepEqual([...path.querySelectorAll(".bsd-path-user")], nodes);
       layout.destroy();
       assert.equal(disconnected, true);
       window.close();

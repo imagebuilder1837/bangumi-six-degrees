@@ -529,15 +529,15 @@
   const direction = (value) => ["friends", "rev_friends"].includes(value);
   const timestamp = (value) =>
     Number.isFinite(value) && value >= 0 && value <= 8640000000000000;
-  const fields = (value, allowed) =>
+  const fields$1 = (value, allowed) =>
     record(value) && Object.keys(value).every((key) => allowed.includes(key));
   const missingIssue = (issue) =>
-    fields(issue, ["code", "count"]) &&
+    fields$1(issue, ["code", "count"]) &&
     issue.code === "missing-identifiers" &&
     Number.isSafeInteger(issue.count) &&
     issue.count > 0;
   const unavailableIssue = (issue) =>
-    fields(issue, ["code"]) &&
+    fields$1(issue, ["code"]) &&
     issue.code === "deleted-display-name-page-unavailable";
 
   function arrayOf(value, accepts) {
@@ -549,7 +549,7 @@
 
   function snapshot(value) {
     if (
-      !fields(value, ["status", "members", "fetchedAt", "issue"]) ||
+      !fields$1(value, ["status", "members", "fetchedAt", "issue"]) ||
       !timestamp(value.fetchedAt)
     )
       return false;
@@ -577,7 +577,7 @@
 
   function user(value) {
     return (
-      fields(value, ["name", "avatar", "fetchedAt"]) &&
+      fields$1(value, ["name", "avatar", "fetchedAt"]) &&
       typeof value.name === "string" &&
       typeof value.avatar === "string" &&
       avatar(value.avatar) &&
@@ -597,7 +597,7 @@
         "Unsupported relationship record version",
       );
     if (
-      !fields(entry, ["version", "value"]) ||
+      !fields$1(entry, ["version", "value"]) ||
       !(name === "relationships" ? snapshot(entry.value) : user(entry.value))
     )
       throw new RelationshipStoreError(
@@ -616,7 +616,7 @@
   }
 
   function queryEntries(query) {
-    requireInput(fields(query, ["relationships", "users"]));
+    requireInput(fields$1(query, ["relationships", "users"]));
     const { relationships = [], users = [] } = query;
     requireInput(
       arrayOf(
@@ -638,7 +638,7 @@
   }
 
   function batchEntries(batch) {
-    requireInput(fields(batch, ["relationships", "users"]));
+    requireInput(fields$1(batch, ["relationships", "users"]));
     const { relationships = {}, users = {} } = batch;
     requireInput(record(relationships) && record(users));
     const entries = [];
@@ -1346,7 +1346,7 @@
     }
   }
 
-  const storageKey = "bangumi-six-degrees:excluded-intermediates";
+  const storageKey$1 = "bangumi-six-degrees:excluded-intermediates";
 
   function createExclusions({ site, store, storage, now, onUpdate, onChange }) {
     const state = {
@@ -1358,7 +1358,7 @@
       cacheWarning: "",
     };
     try {
-      const raw = storage?.()?.getItem(storageKey);
+      const raw = storage?.()?.getItem(storageKey$1);
       if (raw !== null && raw !== undefined) {
         const saved = JSON.parse(raw);
         if (
@@ -1382,7 +1382,7 @@
     function save() {
       try {
         storage().setItem(
-          storageKey,
+          storageKey$1,
           JSON.stringify({ version: 1, ids: state.users.map(({ id }) => id) }),
         );
         state.storageWarning = "";
@@ -1489,6 +1489,180 @@
     };
   }
 
+  const storageKey = "bangumi-six-degrees:recent-explorations";
+  const fields = [
+    "start",
+    "end",
+    "status",
+    "hops",
+    "mode",
+    "hasExclusions",
+    "completedAt",
+  ];
+  function validEntry(entry) {
+    return (
+      entry &&
+      typeof entry === "object" &&
+      Object.keys(entry).length === fields.length &&
+      fields.every((field) => Object.hasOwn(entry, field)) &&
+      [entry.start, entry.end].every(
+        (id) => typeof id === "string" && normalizeInput(id) === id,
+      ) &&
+      ["mutual", "directed", "undirected"].includes(entry.mode) &&
+      typeof entry.hasExclusions === "boolean" &&
+      Number.isSafeInteger(entry.completedAt) &&
+      entry.completedAt >= 0 &&
+      entry.completedAt <= 8640000000000000 &&
+      (entry.status === "unreachable"
+        ? entry.hops === null
+        : entry.status === "found" &&
+          Number.isSafeInteger(entry.hops) &&
+          entry.hops >= 0 &&
+          (entry.hops === 0) === (entry.start === entry.end))
+    );
+  }
+
+  function createHistory({ store, storage, now, onUpdate }) {
+    const state = {
+      entries: [],
+      users: {},
+      storageWarning: "",
+      cacheWarning: "",
+    };
+    try {
+      const raw = storage?.()?.getItem(storageKey);
+      if (raw !== null && raw !== undefined) {
+        const saved = JSON.parse(raw);
+        if (
+          saved?.version !== 1 ||
+          !Array.isArray(saved.entries) ||
+          saved.entries.length > 5 ||
+          !saved.entries.every(validEntry)
+        )
+          throw new Error("探索记录格式无效");
+        state.entries = saved.entries;
+      }
+    } catch {
+      state.storageWarning = "无法读取探索记录，已按空记录继续。";
+    }
+    let revision = 0;
+    function mergeProfiles(profiles) {
+      const ids = new Set(
+        state.entries.flatMap(({ start, end }) => [start, end]),
+      );
+      state.users = Object.fromEntries(
+        [...ids].flatMap((id) => {
+          const previous = Object.hasOwn(state.users, id)
+            ? state.users[id]
+            : null;
+          const incoming = Object.hasOwn(profiles, id) ? profiles[id] : null;
+          const profile =
+            incoming && (!previous || incoming.fetchedAt >= previous.fetchedAt)
+              ? incoming
+              : previous;
+          return profile ? [[id, profile]] : [];
+        }),
+      );
+    }
+    async function loadProfiles() {
+      if (!state.entries.length) return;
+      const version = revision;
+      try {
+        const cached = await store.read({
+          users: [
+            ...new Set(state.entries.flatMap(({ start, end }) => [start, end])),
+          ],
+        });
+        if (version !== revision) return;
+        mergeProfiles(cached.users);
+      } catch {
+        if (version !== revision) return;
+        state.cacheWarning = "无法读取用户资料缓存，探索记录仍保留。";
+      }
+      onUpdate();
+    }
+    void Promise.resolve().then(loadProfiles);
+    return {
+      state,
+      clear() {
+        revision++;
+        state.entries = [];
+        state.users = {};
+        state.cacheWarning = "";
+        try {
+          storage().removeItem(storageKey);
+          state.storageWarning = "";
+        } catch {
+          state.storageWarning =
+            "探索记录未能清空，当前页面已清空，刷新后可能重新出现。";
+        }
+      },
+      record(result, users) {
+        if (!["found", "unreachable"].includes(result.status)) return;
+        const remaining = state.entries.filter(
+          (entry) =>
+            entry.start !== result.conditions.start ||
+            entry.end !== result.conditions.end ||
+            entry.mode !== result.conditions.mode,
+        );
+        state.entries = [
+          {
+            start: result.conditions.start,
+            end: result.conditions.end,
+            status: result.status,
+            hops: result.status === "found" ? result.path.length - 1 : null,
+            mode: result.conditions.mode,
+            hasExclusions: !!result.conditions.excluded.length,
+            completedAt: now(),
+          },
+          ...remaining,
+        ].slice(0, 5);
+        try {
+          storage().setItem(
+            storageKey,
+            JSON.stringify({ version: 1, entries: state.entries }),
+          );
+          state.storageWarning = "";
+        } catch {
+          state.storageWarning =
+            "探索记录未能保存，当前页面仍可查看，刷新后可能丢失。";
+        }
+        const profiles = Object.fromEntries(
+          users.map(({ id, name, avatar, fetchedAt }) => [
+            id,
+            { name, avatar, fetchedAt },
+          ]),
+        );
+        mergeProfiles(profiles);
+        const version = revision;
+        void (async () => {
+          try {
+            // The shared store overwrites directly. Compare these two profiles
+            // before writing so a stale page does not roll back known newer data.
+            const cached = await store.read({ users: Object.keys(profiles) });
+            if (version !== revision) return;
+            const updates = Object.fromEntries(
+              Object.entries(profiles).filter(
+                ([id, profile]) =>
+                  !Object.hasOwn(cached.users, id) ||
+                  cached.users[id].fetchedAt <= profile.fetchedAt,
+              ),
+            );
+            mergeProfiles({ ...cached.users, ...updates });
+            state.cacheWarning = "";
+            onUpdate();
+            if (Object.keys(updates).length)
+              await store.commit({ users: updates });
+          } catch {
+            if (version !== revision) return;
+            state.cacheWarning = "用户资料缓存保存失败，探索记录仍保留。";
+            onUpdate();
+          }
+        })();
+      },
+    };
+  }
+
   const modes = ["mutual", "directed", "undirected"];
   const initialMessage = "选两位班友，看看相隔几跳。";
 
@@ -1541,8 +1715,15 @@
         emit();
       },
     });
+    const history = createHistory({
+      store,
+      storage,
+      now,
+      onUpdate: () => emit(),
+    });
     const state = {
       exclusions: exclusions.state,
+      history: history.state,
       visible: false,
       phase: "idle",
       mode: "mutual",
@@ -1695,11 +1876,14 @@
           },
         });
         abort.signal.throwIfAborted();
+        const users = await source.users(
+          result.status === "found"
+            ? result.path
+            : [conditions.start, conditions.end],
+          { signal: abort.signal },
+        );
+        abort.signal.throwIfAborted();
         if (result.status === "found") {
-          const users = await source.users(result.path, {
-            signal: abort.signal,
-          });
-          abort.signal.throwIfAborted();
           state.result = immutable({
             status: "found",
             conditions,
@@ -1721,6 +1905,10 @@
           }[result.status];
         }
         state.phase = "complete";
+        history.record(state.result, [
+          users.get(conditions.start),
+          users.get(conditions.end),
+        ]);
       } catch (error) {
         if (controller !== abort) return;
         const stopped = abort.signal.aborted;
@@ -1746,6 +1934,10 @@
         return () => listeners.delete(listener);
       },
       setInput,
+      clearHistory() {
+        history.clear();
+        emit();
+      },
       setExcludedInput(value) {
         if (permissions().canEdit) exclusions.setInput(value);
       },
@@ -1885,12 +2077,18 @@
 .bsd-workspace::before { content: ""; position: absolute; inset: 0; opacity: .12; background-image: radial-gradient(var(--bsd-muted) .7px, transparent .7px); background-size: 23px 23px; pointer-events: none; }
 .bsd-top { display: grid; grid-template-columns: minmax(0,1fr) 33px minmax(0,1fr); align-items: center; gap: 22px; position: relative; }
 .bsd-endpoint { display: grid; grid-template-columns: 58px minmax(0,1fr); align-items: center; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--bsd-line); border-radius: 20px; background: var(--bsd-bg); }
-.bsd-avatar-link { display: block; border-radius: 19px; }
+.bsd-avatar-link { display: block; border-radius: 11px; }
 .bsd-avatar-link:not([href]) { cursor: default; }
-.bsd-avatar { display: block; width: 58px; height: 58px; border-radius: 19px; object-fit: cover; background: var(--bsd-soft); box-shadow: 0 5px 14px var(--bsd-shadow); }
+.bsd-avatar-link img { display: block; border-radius: inherit; object-fit: cover; transition: transform .2s; }
+.bsd-avatar-link[href]:hover img { transform: translateY(-4px) rotate(-3deg); }
+.bsd-user-name { color: var(--bsd-fg); font-weight: 650; line-height: 1.65; }
+.bsd-user-id { color: var(--bsd-muted); font-size: 11px; line-height: 1.65; }
+.bsd-endpoint .bsd-avatar-link { border-radius: 19px; }
+.bsd-avatar { display: block; width: 58px; height: 58px; background: var(--bsd-soft); box-shadow: 0 5px 14px var(--bsd-shadow); }
 .bsd-endpoint-info { min-width: 0; }
 .bsd-endpoint-label { display: block; margin-bottom: 2px; color: var(--bsd-muted); font-size: 10px; }
-.bsd-endpoint-name, .bsd-endpoint-placeholder { display: block; font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsd-endpoint-name, .bsd-endpoint-placeholder { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bsd-endpoint-placeholder { font-weight: 650; }
 .bsd-input, .bsd-exclusions-input { display: flex; align-items: center; gap: 5px; min-width: 0; padding: 5px 10px; border: 1px solid var(--bsd-line); border-radius: 12px; font-size: 12px; color: var(--bsd-fg); }
 .bsd-input > span, .bsd-exclusions-input > span { flex: none; }
 .bsd-input input, .bsd-exclusions-input input { min-width: 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; box-shadow: none; }
@@ -1919,10 +2117,10 @@
 .bsd-exclusions-list:empty { display: none; }
 .bsd-excluded-user { display: grid; grid-template-columns: 32px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 9px 0; }
 .bsd-excluded-user + .bsd-excluded-user { border-top: 1px solid var(--bsd-line); }
-.bsd-excluded-user img { width: 32px; height: 32px; border-radius: 11px; object-fit: cover; background: var(--bsd-soft); }
+.bsd-excluded-user img { width: 32px; height: 32px; background: var(--bsd-soft); }
 .bsd-excluded-user div { min-width: 0; }
-.bsd-excluded-user strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
-.bsd-excluded-user small { display: block; color: var(--bsd-muted); font-size: 11px; overflow-wrap: anywhere; }
+.bsd-excluded-user strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.bsd-excluded-user small { display: block; overflow-wrap: anywhere; }
 .bsd-excluded-user button { padding: 4px 0 4px 8px; border: 0; background: transparent; color: var(--bsd-pink); font-size: 11px; }
 .bsd-excluded-user button:hover:not(:disabled) { text-decoration: underline; }
 .bsd-mode-trigger { border: 1px solid var(--bsd-line); background: var(--bsd-bg); border-radius: 20px; padding: 6px 15px; font-size: 12px !important; }
@@ -1948,16 +2146,39 @@
 .bsd-pulse i:nth-child(2) { animation-delay: .2s; }.bsd-pulse i:nth-child(3) { animation-delay: .4s; }
 .bsd-output { width: 100%; min-width: 0; }
 .bsd-path { position: relative; display: grid; align-items: start; gap: 40px 16px; width: 100%; margin: 6px auto 0; padding: 20px 16px 12px; }
-.bsd-path a { position: relative; display: flex; flex-direction: column; align-items: center; justify-self: center; width: 100%; max-width: 78px; min-width: 0; color: var(--bsd-fg); text-decoration: none; animation: bsd-appear .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
+.bsd-path-user { position: relative; display: flex; flex-direction: column; align-items: center; justify-self: center; width: 100%; max-width: 78px; min-width: 0; animation: bsd-appear .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
+.bsd-path-user .bsd-avatar-link { border-radius: 18px; }
 .bsd-path-lines { position: absolute; inset: 0; pointer-events: none; color: var(--bsd-pink); overflow: visible; }
 .bsd-path-connection { pointer-events: stroke; animation: bsd-connect .4s both; animation-delay: calc(var(--bsd-step) * 90ms); }
 .bsd-path-endpoint { margin-top: 5px; color: var(--bsd-pink); font-size: 10px; }
-.bsd-path img { display: block; width: 52px; height: 52px; border-radius: 18px; object-fit: cover; transition: transform .2s; }
-.bsd-path a:hover img { transform: translateY(-4px) rotate(-3deg); }
-.bsd-path strong, .bsd-path small { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.65; }
-.bsd-path strong { margin-top: 6px; font-size: 11px; }.bsd-path small { color: var(--bsd-muted); font-size: 10px; }
+.bsd-path img { width: 52px; height: 52px; }
+.bsd-path strong, .bsd-path small { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.bsd-path strong { margin-top: 6px; font-size: 11px; }.bsd-path small { font-size: 10px; }
 .bsd-egg { color: var(--bsd-muted); font-size: 11px; margin: 10px 0; }
 .bsd-warning { color: #a96c20; font-size: 12px; margin: 10px 0; overflow-wrap: anywhere; }
+.bsd-history { position: relative; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--bsd-line); }
+.bsd-history header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bsd-history h3 { margin: 0; color: var(--bsd-muted); font-size: 12px; font-weight: 600; }
+.bsd-history [data-action="clear-history"] { padding: 4px 0 4px 8px; border: 0; background: transparent; color: var(--bsd-pink); font-size: 11px; }
+.bsd-history [data-action="clear-history"]:hover { text-decoration: underline; }
+.bsd-history-list { margin: 6px 0 0; padding: 0; list-style: none; }
+.bsd-history-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 12px 0; }
+.bsd-history-row + .bsd-history-row { border-top: 1px solid var(--bsd-line); }
+.bsd-history-main { display: flex; flex-wrap: wrap; align-items: center; flex: 1 1 440px; min-width: 0; gap: 10px 20px; }
+.bsd-history-pair { display: grid; grid-template-columns: fit-content(180px) 14px fit-content(180px); align-items: center; gap: 10px; width: fit-content; min-width: 0; max-width: 100%; }
+.bsd-history-user { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 180px; }
+.bsd-history-user a { flex: none; }
+.bsd-history-user img { width: 32px; height: 32px; background: var(--bsd-soft); }
+.bsd-history-user > div { min-width: 0; }
+.bsd-history-user strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.bsd-history-user small { display: block; overflow-wrap: anywhere; }
+.bsd-history-arrow { display: block; flex: none; width: 14px; height: 14px; color: var(--bsd-muted); }
+.bsd-history-summary { display: flex; align-items: baseline; flex: none; gap: 6px; white-space: nowrap; }
+.bsd-history-result { color: var(--bsd-fg); font-size: 12px; }
+.bsd-history-hops { color: var(--bsd-pink); font-weight: 650; }
+.bsd-history-mode, .bsd-history-meta { color: var(--bsd-muted); font-size: 11px; line-height: 1.65; }
+.bsd-history-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-left: auto; max-width: 100%; }
+.bsd-history-meta time { overflow-wrap: anywhere; }
 .bsd-footer { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 16px; padding: 18px 28px; border-top: 1px solid var(--bsd-line); }
 .bsd-hint { min-width: 0; color: var(--bsd-muted); font-size: 12px; overflow-wrap: anywhere; }
 .bsd-actions { display: flex; flex: none; gap: 10px; }
@@ -1977,7 +2198,7 @@
   .bsd-header { padding: 18px 20px 15px; }.bsd-header h2 { font-size: 20px; }
   .bsd-body { padding: 0 12px 5px; }.bsd-workspace { padding: 15px; }
   .bsd-top { grid-template-columns: minmax(0,1fr); gap: 7px; }
-  .bsd-endpoint { padding: 9px 13px; grid-template-columns: 44px minmax(0,1fr); }.bsd-avatar { width: 44px; height: 44px; border-radius: 14px; }
+  .bsd-endpoint { padding: 9px 13px; grid-template-columns: 44px minmax(0,1fr); }.bsd-avatar { width: 44px; height: 44px; }.bsd-endpoint .bsd-avatar-link { border-radius: 14px; }
   .bsd-swap { justify-self: center; width: 27px; height: 27px; font-size: 16px !important; transform: rotate(90deg); }
   .bsd-mode { display: flex; flex-direction: column; gap: 9px; }.bsd-mode-choice { gap: 6px; }.bsd-mode-note { width: 100%; text-align: center; }
   .bsd-dialog .bsd-exclusions-toggle { align-self: flex-end; }
@@ -1987,6 +2208,7 @@
   .bsd-actions [data-action="explore"] { padding: 10px 20px; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .bsd-avatar-link[href]:hover img { transform: none; }
   .bsd-dialog, .bsd-dialog *, .bsd-dialog *::before, .bsd-dialog *::after { animation: none !important; transition: none !important; }
 }
 `;
@@ -2125,7 +2347,7 @@
 
   // Layout only: the DOM and tab order remain the original start-to-end sequence.
   function layoutPath(window, path, relations) {
-    const nodes = [...path.querySelectorAll("a")];
+    const nodes = [...path.querySelectorAll(".bsd-path-user")];
     const svg = window.document.createElementNS(svgNS, "svg");
     svg.classList.add("bsd-path-lines");
     svg.setAttribute("aria-hidden", "true");
@@ -2316,11 +2538,12 @@
       <p id="bsd-exclusions-feedback" class="bsd-exclusions-feedback" role="status"></p><p class="bsd-exclusions-warning" role="status" hidden></p>
       <p class="bsd-exclusions-empty">暂未排除班友。</p><ul class="bsd-exclusions-list"></ul>
     </section>
-    <div class="bsd-results"><div class="bsd-idle-mark" aria-hidden="true"><i></i><i></i><i></i></div><div role="status"><span class="bsd-status-label"></span><h3 class="bsd-message"></h3><p class="bsd-detail"></p></div><div class="bsd-progress"></div><div class="bsd-pulse" aria-hidden="true" hidden><i></i><i></i><i></i></div><div class="bsd-output"></div><p class="bsd-warning" role="status" hidden></p></div></div></div>
+    <div class="bsd-results"><div class="bsd-idle-mark" aria-hidden="true"><i></i><i></i><i></i></div><div role="status"><span class="bsd-status-label"></span><h3 class="bsd-message"></h3><p class="bsd-detail"></p></div><div class="bsd-progress"></div><div class="bsd-pulse" aria-hidden="true" hidden><i></i><i></i><i></i></div><div class="bsd-output"></div><p class="bsd-warning" role="status" hidden></p></div>
+    <section class="bsd-history" aria-labelledby="bsd-history-title" hidden><header><h3 id="bsd-history-title">最近探索</h3><button type="button" data-action="clear-history">清空记录</button></header><ul class="bsd-history-list"></ul></section></div></div>
     <footer class="bsd-footer"><span id="bsd-hint" class="bsd-hint" role="status"></span><div class="bsd-actions"><button type="button" data-action="stop" hidden>停止探索</button><button type="button" data-action="explore">开始探索 ↗</button></div></footer>
   </section>`;
     function endpoint(label, index) {
-      return `<div class="bsd-endpoint" data-endpoint="${index}"><a class="bsd-avatar-link" target="_blank" rel="noopener noreferrer"><img class="bsd-avatar" alt=""></a><div class="bsd-endpoint-info"><span class="bsd-endpoint-label">${label}</span><strong class="bsd-endpoint-name"></strong><span class="bsd-endpoint-placeholder">选择一位班友</span><label class="bsd-input"><span>@</span><input aria-label="${label}" aria-describedby="bsd-hint" placeholder="请输入用户标识" autocomplete="off" spellcheck="false"></label><div class="bsd-shortcuts"><button type="button" data-fill="self" title="填入自己">填入自己</button><button type="button" data-action="random" aria-label="随机班友">随机班友</button></div></div></div>`;
+      return `<div class="bsd-endpoint" data-endpoint="${index}"><a class="bsd-avatar-link" target="_blank" rel="noopener noreferrer"><img class="bsd-avatar" alt=""></a><div class="bsd-endpoint-info"><span class="bsd-endpoint-label">${label}</span><strong class="bsd-endpoint-name bsd-user-name"></strong><span class="bsd-endpoint-placeholder">选择一位班友</span><label class="bsd-input"><span>@</span><input aria-label="${label}" aria-describedby="bsd-hint" placeholder="请输入用户标识" autocomplete="off" spellcheck="false"></label><div class="bsd-shortcuts"><button type="button" data-fill="self" title="填入自己">填入自己</button><button type="button" data-action="random" aria-label="随机班友">随机班友</button></div></div></div>`;
     }
     document.body.append(overlay);
     const dialog = overlay.querySelector('[role="dialog"]');
@@ -2396,7 +2619,7 @@
           row = document.createElement("li");
           row.className = "bsd-excluded-user";
           row.innerHTML =
-            '<a class="bsd-avatar-link" target="_blank" rel="noopener noreferrer"><img alt=""></a><div><strong></strong><small></small></div><button type="button">移除</button>';
+            '<a class="bsd-avatar-link" target="_blank" rel="noopener noreferrer"><img alt=""></a><div><strong class="bsd-user-name"></strong><small class="bsd-user-id"></small></div><button type="button">移除</button>';
           const profile = row.querySelector("a");
           profile.href = `/user/${encodeURIComponent(user.id)}`;
           profile.setAttribute("aria-label", `打开 @${user.id} 的主页`);
@@ -2414,6 +2637,118 @@
         row.querySelector("strong").title = user.name || user.id;
         text(row.querySelector("small"), `@${user.id}`);
         row.querySelector("button").disabled = busy;
+      }
+    }
+    const historySection = overlay.querySelector(".bsd-history");
+    historySection
+      .querySelector('[data-action="clear-history"]')
+      .addEventListener("click", () => {
+        if (
+          window.confirm(
+            "清空全部最近探索记录？此操作不会清除当前结果或共享缓存。",
+          )
+        )
+          session.clearHistory();
+      });
+    const historyList = historySection.querySelector("ul");
+    const historyRows = new Map();
+    function renderHistory(history) {
+      historySection.hidden = !history.entries.length;
+      const key = ({ start, end, mode }) => JSON.stringify([start, end, mode]);
+      const keys = new Set(history.entries.map(key));
+      for (const [id, row] of historyRows) {
+        if (keys.has(id)) continue;
+        row.remove();
+        historyRows.delete(id);
+      }
+      let previous = null;
+      for (const entry of history.entries) {
+        const id = key(entry);
+        let row = historyRows.get(id);
+        if (!row) {
+          row = document.createElement("li");
+          row.className = "bsd-history-row";
+          row.innerHTML =
+            '<div class="bsd-history-main"><div class="bsd-history-pair" role="group" aria-label="探索端点，按起点至终点排列"></div><div class="bsd-history-summary"><span class="bsd-history-result"></span><small class="bsd-history-mode"></small></div></div><small class="bsd-history-meta"><span class="bsd-history-restriction"></span><time></time></small>';
+          const pair = row.querySelector(".bsd-history-pair");
+          for (const [index, userId] of [entry.start, entry.end].entries()) {
+            if (index) {
+              const arrow = document.createElementNS(
+                "http://www.w3.org/2000/svg",
+                "svg",
+              );
+              arrow.classList.add("bsd-history-arrow");
+              arrow.setAttribute("viewBox", "0 0 16 16");
+              arrow.setAttribute("aria-hidden", "true");
+              arrow.setAttribute("focusable", "false");
+              arrow.innerHTML =
+                '<path d="M3 8h10m-4-4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>';
+              pair.append(arrow);
+            }
+            const user = document.createElement("div");
+            user.className = "bsd-history-user";
+            user.innerHTML =
+              '<a class="bsd-avatar-link" target="_blank" rel="noopener noreferrer"><img alt=""></a><div><strong class="bsd-user-name"></strong><small class="bsd-user-id"></small></div>';
+            const link = user.querySelector("a");
+            link.href = `/user/${encodeURIComponent(userId)}`;
+            link.setAttribute("aria-label", `打开 @${userId} 的主页`);
+            text(user.querySelector("small"), `@${userId}`);
+            pair.append(user);
+          }
+          historyRows.set(id, row);
+        }
+        const next = previous
+          ? previous.nextElementSibling
+          : historyList.firstElementChild;
+        if (next !== row) {
+          const focused = row.contains(document.activeElement)
+            ? document.activeElement
+            : null;
+          historyList.insertBefore(row, next);
+          // Moving an existing row can blur its link; restore without scrolling.
+          if (focused && document.activeElement !== focused)
+            focused.focus({ preventScroll: true });
+        }
+        previous = row;
+        row.querySelectorAll(".bsd-history-user").forEach((element, index) => {
+          const userId = index === 0 ? entry.start : entry.end;
+          const profile = Object.hasOwn(history.users, userId)
+            ? history.users[userId]
+            : {};
+          const name = element.querySelector("strong");
+          text(name, profile.name || userId);
+          name.title = name.textContent;
+          image(element.querySelector("img"), profile.avatar);
+        });
+        const result = row.querySelector(".bsd-history-result");
+        if (entry.status === "found") {
+          const count = document.createElement("span");
+          count.className = "bsd-history-hops";
+          count.textContent = String(entry.hops);
+          result.replaceChildren(count, " 跳");
+        } else text(result, "不可达");
+        text(
+          row.querySelector(".bsd-history-mode"),
+          `· ${modeNames[entry.mode]}`,
+        );
+        const restriction = row.querySelector(".bsd-history-restriction");
+        restriction.hidden = !entry.hasExclusions;
+        text(restriction, entry.hasExclusions ? "含排除条件 ·" : "");
+        const date = new Date(entry.completedAt);
+        const time = row.querySelector("time");
+        time.dateTime = date.toISOString();
+        text(
+          time,
+          date.toLocaleString("zh-CN", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          }),
+        );
+        time.title = date.toLocaleString();
       }
     }
     const message = overlay.querySelector(".bsd-message");
@@ -2579,20 +2914,27 @@
         };
       });
       result.path.forEach((user, index) => {
+        const node = document.createElement("div");
+        node.className = "bsd-path-user";
+        node.style.setProperty("--bsd-step", Math.min(index, 7));
         const link = document.createElement("a");
+        link.className = "bsd-avatar-link";
+        link.setAttribute("aria-label", `打开 @${user.id} 的主页`);
         link.href = `/user/${encodeURIComponent(user.id)}`;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        link.style.setProperty("--bsd-step", Math.min(index, 7));
         const avatar = document.createElement("img");
         avatar.alt = "";
         image(avatar, user.avatar);
         const name = document.createElement("strong");
+        name.className = "bsd-user-name";
         name.textContent = user.name || user.id;
         name.title = name.textContent;
         const id = document.createElement("small");
+        id.className = "bsd-user-id";
         id.textContent = `@${user.id}`;
-        link.append(avatar, name, id);
+        link.append(avatar);
+        node.append(link, name, id);
         if (index === 0 || index === result.path.length - 1) {
           const label = document.createElement("span");
           label.className = "bsd-path-endpoint";
@@ -2602,9 +2944,9 @@
               : index === 0
                 ? "起点"
                 : "终点";
-          link.append(label);
+          node.append(label);
         }
-        path.append(link);
+        path.append(node);
         if (relations[index]) {
           const description = document.createElement("span");
           description.id = `bsd-path-relation-${index}`;
@@ -2633,6 +2975,7 @@
       dialog.hidden = !state.visible;
       const busy = !state.canEdit;
       renderExclusions(state, busy);
+      renderHistory(state.history);
       const randomizing = state.endpoints.some(
         ({ activity }) => activity === "randomizing",
       );
@@ -2717,6 +3060,11 @@
       );
       if (state.exclusions.storageWarning)
         hints.push(state.exclusions.storageWarning);
+      for (const warning of [
+        state.history.storageWarning,
+        state.history.cacheWarning,
+      ])
+        if (warning) hints.push(warning);
       if (randomizing) hints.push("正在抽取班友…");
       const resolving = state.endpoints.flatMap(({ activity }, index) =>
         activity === "resolving" ? [index === 0 ? "起点用户" : "终点用户"] : [],

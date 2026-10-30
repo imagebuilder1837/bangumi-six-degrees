@@ -2,6 +2,7 @@ import { search } from "./search.mjs";
 import { createDataSource } from "./data.mjs";
 import { normalizeInput } from "./site.mjs";
 import { createExclusions } from "./exclusions.mjs";
+import { createHistory } from "./history.mjs";
 
 const modes = ["mutual", "directed", "undirected"];
 const initialMessage = "选两位班友，看看相隔几跳。";
@@ -55,8 +56,15 @@ export function createSession({
       emit();
     },
   });
+  const history = createHistory({
+    store,
+    storage,
+    now,
+    onUpdate: () => emit(),
+  });
   const state = {
     exclusions: exclusions.state,
+    history: history.state,
     visible: false,
     phase: "idle",
     mode: "mutual",
@@ -207,9 +215,14 @@ export function createSession({
         },
       });
       abort.signal.throwIfAborted();
+      const users = await source.users(
+        result.status === "found"
+          ? result.path
+          : [conditions.start, conditions.end],
+        { signal: abort.signal },
+      );
+      abort.signal.throwIfAborted();
       if (result.status === "found") {
-        const users = await source.users(result.path, { signal: abort.signal });
-        abort.signal.throwIfAborted();
         state.result = immutable({
           status: "found",
           conditions,
@@ -231,6 +244,10 @@ export function createSession({
         }[result.status];
       }
       state.phase = "complete";
+      history.record(state.result, [
+        users.get(conditions.start),
+        users.get(conditions.end),
+      ]);
     } catch (error) {
       if (controller !== abort) return;
       const stopped = abort.signal.aborted;
@@ -256,6 +273,10 @@ export function createSession({
       return () => listeners.delete(listener);
     },
     setInput,
+    clearHistory() {
+      history.clear();
+      emit();
+    },
     setExcludedInput(value) {
       if (permissions().canEdit) exclusions.setInput(value);
     },
