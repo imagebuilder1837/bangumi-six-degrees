@@ -7,6 +7,9 @@
 // @match        https://bgm.tv/user/*
 // @match        https://bangumi.tv/user/*
 // @match        https://chii.in/user/*
+// @exclude      https://bgm.tv/user/*/*
+// @exclude      https://bangumi.tv/user/*/*
+// @exclude      https://chii.in/user/*/*
 // @run-at       document-end
 // @grant        none
 // @license      MIT
